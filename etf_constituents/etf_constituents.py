@@ -312,7 +312,7 @@ def enrich_tickers(rows: list[Row], session: requests.Session) -> int:
 # ---------------------------------------------------------------------------
 
 
-def write_xlsx(path: str, rows: list[Row], meta: dict[str, object]) -> None:
+def write_xlsx(path: str, rows: list[Row]) -> None:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Constituents"
@@ -336,15 +336,6 @@ def write_xlsx(path: str, rows: list[Row], meta: dict[str, object]) -> None:
     for index, column in enumerate(COLUMNS, start=1):
         sheet.column_dimensions[get_column_letter(index)].width = widths[column]
     sheet.auto_filter.ref = f"A1:{get_column_letter(len(COLUMNS))}{sheet.max_row}"
-
-    metadata = workbook.create_sheet("Metadata")
-    metadata.append(["Field", "Value"])
-    for cell in metadata[1]:
-        cell.font = Font(bold=True)
-    for key, value in meta.items():
-        metadata.append([key, value])
-    metadata.column_dimensions["A"].width = 26
-    metadata.column_dimensions["B"].width = 56
 
     workbook.save(path)
 
@@ -379,14 +370,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="detailed logging")
     return parser.parse_args(argv)
-
-
-def _expansion_summary(args: argparse.Namespace) -> str:
-    if args.no_expand:
-        return "off"
-    if args.max_depth < 0:
-        return "on (unlimited depth)"
-    return f"on (max depth {args.max_depth})"
 
 
 def default_output_name(isin: str, as_of: str) -> str:
@@ -424,7 +407,6 @@ def main(argv: list[str] | None = None) -> int:
         expand=not args.no_expand,
         max_depth=args.max_depth,
     )
-    leaf_count = len(rows)
     rows = aggregate(rows)
     rows = label_sources(rows)
     rows = add_balancing_row(rows)
@@ -437,19 +419,7 @@ def main(argv: list[str] | None = None) -> int:
     msci.report_unresolved()
 
     output = args.output or default_output_name(isin, fund.as_of)
-    meta = {
-        "Requested ISIN": isin,
-        "Fund name": fund_name or "",
-        "Issuer": fund.issuer,
-        "Holdings as of": fund.as_of or "n/a",
-        "Direct holdings": len(fund.holdings),
-        "Leaf rows before aggregation": leaf_count,
-        "Rows in output": len(rows),
-        "Nested ETF expansion": _expansion_summary(args),
-        "Ticker enrichment": "OpenFIGI" if args.enrich_ticker else "off",
-        "Generated at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-    }
-    write_xlsx(output, rows, meta)
+    write_xlsx(output, rows)
 
     total = sum(row["Weight"] for row in rows)
     log.info("Wrote %d rows to %s (weights total %.6f%%)", len(rows), output, total)

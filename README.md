@@ -11,6 +11,42 @@ funds are not comparable and cannot be summed into a portfolio.
 Supported issuers: **iShares** (BlackRock), **Xtrackers** (DWS) and **Vanguard**
 (European UCITS range and US-domiciled ETFs alike).
 
+## Disclaimer
+
+**No warranty. No liability. Verify every figure before relying on it.**
+
+This software is provided "as is", without warranty of any kind, express or implied, including
+but not limited to the warranties of merchantability, fitness for a particular purpose and
+non-infringement. In no event shall the author or copyright holder be liable for any claim,
+damages or other liability, whether in an action of contract, tort or otherwise, arising from,
+out of or in connection with this software or the use of or other dealings in it. To the maximum
+extent permitted by applicable law, the author disclaims all liability for any direct, indirect,
+incidental, special, consequential, exemplary or punitive damages, and for any trading or
+investment loss, however caused.
+
+The output is assembled from undocumented endpoints of the issuers' public websites. Those
+endpoints can change, break, or return incomplete, stale or incorrect data at any time, and the
+processing applied here -- sector and asset class mapping, country and region classification,
+look-through of nested funds, weight rescaling and the balancing row -- introduces further
+approximation. Figures may not match the issuer's official documentation and must not be assumed
+to be accurate, complete or current.
+
+Nothing produced by this tool is investment, financial, legal, accounting or tax advice, nor a
+recommendation, offer or solicitation to buy or sell any security. Before relying on any figure
+for any purpose, verify it against the fund's official documentation -- KID/KIID, prospectus,
+annual and semi-annual reports, and the issuer's own published holdings files -- which are the
+only authoritative sources.
+
+This project is not affiliated with, endorsed by, sponsored by or otherwise connected to
+BlackRock (iShares), DWS (Xtrackers), Vanguard, MSCI, FTSE Russell, S&P, ICE, Bloomberg, OpenFIGI
+or any other party named in this repository. All trademarks, index names and fund names are the
+property of their respective owners and are used here for identification only. You are solely
+responsible for ensuring that your use of the third-party endpoints complies with the applicable
+terms of service and with all applicable laws, including those on database and copyright.
+
+By using this software you accept the above and assume full responsibility for any decision taken
+on the basis of its output.
+
 ## Repo layout
 
 ```
@@ -63,8 +99,8 @@ difference between a few minutes and a few seconds.
 
 ## Output
 
-Sheet **`Constituents`**, one row per security *per source ETF*, sorted by descending weight
-with the balancing row always last:
+A single sheet, **`Constituents`**, one row per security *per source ETF*, sorted by descending
+weight with the balancing row always last:
 
 `Ticker, ISIN, Name, Sector, Class, Country, Region, Category, Currency, Weight`
 
@@ -75,10 +111,6 @@ therefore appears once per sub-fund, so the same ISIN can repeat: the weights st
 
 `Weight` is written as an Excel percentage (`0.0000%`, so 0.0558 is rendered `5.5800%`) and the
 column adds up to exactly 100%.
-
-Sheet **`Metadata`** with the requested ISIN, fund name, issuer, as-of date of the
-constituents, number of direct holdings, leaf rows before aggregation, rows in the output,
-expansion and ticker-enrichment status, and the generation timestamp.
 
 The normalized columns take values from closed sets:
 
