@@ -1,4 +1,4 @@
-# Portalysis
+# ETF Constituents
 
 Tools to analyze the real composition of an ETF portfolio.
 
@@ -40,14 +40,14 @@ Dependencies: `requests`, `openpyxl`, `pycountry`.
 .venv/bin/python etf_constituents/etf_constituents.py LU0274208692 --enrich-ticker -v
 ```
 
-| Option | Default | Effect |
-|---|---|---|
-| `isin` (positional) | -- | ISIN of the ETF, validated before any network call |
-| `-o, --output` | `{ISIN}_constituents_{date}.xlsx` | destination XLSX file |
-| `--no-expand` | off | do not expand constituents that are themselves ETFs |
-| `--max-depth N` | 3 | maximum expansion depth |
-| `--enrich-ticker` | off | resolve the missing Tickers via OpenFIGI |
-| `-v, --verbose` | off | detailed logging |
+| Option              | Default                           | Effect                                              |
+| ------------------- | --------------------------------- | --------------------------------------------------- |
+| `isin` (positional) | --                                | ISIN of the ETF, validated before any network call  |
+| `-o, --output`      | `{ISIN}_constituents_{date}.xlsx` | destination XLSX file                               |
+| `--no-expand`       | off                               | do not expand constituents that are themselves ETFs |
+| `--max-depth N`     | 3                                 | maximum expansion depth                             |
+| `--enrich-ticker`   | off                               | resolve the missing Tickers via OpenFIGI            |
+| `-v, --verbose`     | off                               | detailed logging                                    |
 
 Logging goes to **stderr**, the result to a file: normalization warnings do not pollute the
 output and stay visible even when redirecting.
@@ -76,12 +76,12 @@ expansion and ticker-enrichment status, and the generation timestamp.
 
 The normalized columns take values from closed sets:
 
-| Column | Values |
-|---|---|
-| `Class` | `Equity`, `Fixed Income`, `Cash`, `Derivative`, `Fund`, `Commodity`, `Other` |
-| `Sector` | the 11 GICS sectors, plus `Government`, `Cash & Derivatives`, `Other` |
-| `Category` | `Developed`, `Emerging`, `Frontier`, `Financial Center`, `Other` |
-| `Region` | `North America`, `Latin America`, `Developed Europe`, `Emerging Europe & CIS`, `Middle East`, `Africa`, `Developed Asia Pacific`, `Emerging Asia`, `Caribbean`, `Other` |
+| Column     | Values                                                                                                                                                                  |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Class`    | `Equity`, `Fixed Income`, `Cash`, `Derivative`, `Fund`, `Commodity`, `Other`                                                                                            |
+| `Sector`   | the 11 GICS sectors, plus `Government`, `Cash & Derivatives`, `Other`                                                                                                   |
+| `Category` | `Developed`, `Emerging`, `Frontier`, `Financial Center`, `Other`                                                                                                        |
+| `Region`   | `North America`, `Latin America`, `Developed Europe`, `Emerging Europe & CIS`, `Middle East`, `Africa`, `Developed Asia Pacific`, `Emerging Asia`, `Caribbean`, `Other` |
 
 ## How it works
 
