@@ -82,7 +82,7 @@ The normalized columns take values from closed sets:
 | `Class`    | `Equity`, `Fixed Income`, `Cash`, `Derivative`, `Fund`, `Commodity`, `Other`                                                                                            |
 | `Sector`   | the 11 GICS sectors, plus `Government`, `Cash & Derivatives`, `Other`                                                                                                   |
 | `Category` | `Developed`, `Emerging`, `Frontier`, `Financial Center`, `Other`                                                                                                        |
-| `Region`   | `North America`, `Latin America`, `Developed Europe`, `Emerging Europe & CIS`, `Middle East`, `Africa`, `Developed Asia Pacific`, `Emerging Asia`, `Caribbean`, `Other` |
+| `Region`   | `North America`, `Latin America`, `Europe`, `Middle East & Africa`, `Asia Pacific`, `Other`                                                                             |
 
 ## How it works
 
@@ -127,7 +127,10 @@ diverge on 2 securities, because of real differences in the two issuers' data.
 `Region` and `Category` follow the MSCI Market Classification (`msci.py`), on a static table
 keyed by ISO code: issuers use non-ISO names (`Croatia (Hrvatska)`, and a `British Vergin
 Islands` with a typo in the DWS export) and resolving them to a code before classifying avoids
-chasing every variant.
+chasing every variant. The two columns answer different questions and are kept apart: `Region`
+is geography alone, `Category` is how developed the market is. The one spot where `Region` is
+not the naive geographic answer is the CIS and the Caucasus, which stay in `Europe` because
+that is where MSCI's "Europe & CIS" and EMEA families put them.
 
 **4. Recursive expansion.** If a constituent is itself an ETF from a supported issuer, its row
 is replaced by its own constituents, with weights rescaled on the actual child total. A
@@ -159,10 +162,9 @@ it, it is reported with a warning.
 - **Sector on Vanguard bonds**: as with Xtrackers, part of the fixed income book carries no
   sector classification and comes out as `Other`.
 - **Country**: iShares uses country-of-risk, Xtrackers the country of incorporation, Vanguard
-  the Bloomberg ISO country. On the
-  same index this produces about twenty different `Region` values between the two issuers
+  the Bloomberg ISO country. On the same index the three disagree on a tail of securities
   (typically companies incorporated in the Netherlands, Ireland or the Cayman Islands but
-  operating in the US).
+  operating in the US), so `Country` and `Region` are not strictly comparable across issuers.
 - The endpoints are not documented public APIs: they are the ones used by the official
   websites and can change without notice.
 

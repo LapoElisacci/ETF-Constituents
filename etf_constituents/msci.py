@@ -1,16 +1,18 @@
 """Country -> (Region, Category) according to the MSCI Market Classification.
 
 Category: Developed | Emerging | Frontier | Financial Center | Other
-Region:   North America | Latin America | Developed Europe | Emerging Europe & CIS |
-          Middle East | Africa | Developed Asia Pacific | Emerging Asia | Caribbean | Other
+Region:   North America | Latin America | Europe | Middle East & Africa |
+          Asia Pacific | Other
 
 The table is keyed by ISO 3166-1 alpha-2 code, not by name: issuers use non-ISO names
 ("Croatia (Hrvatska)", "Korea (South)") and resolving them to a code before
 classifying avoids having to list every variant.
 
-Note: the European Frontier markets (Croatia, Estonia, Iceland, Romania, ...) fall
-under the "Emerging Europe & CIS" region, which follows the MSCI
-"Frontier Markets Europe & CIS" index family and does not imply the country Category.
+Note: Region is purely geographic and says nothing about how developed a market is --
+that is what Category is for. The one place where the result is not the naive geographic
+answer is the CIS and the Caucasus (Kazakhstan, Uzbekistan, Georgia, Armenia, ...) plus
+Turkey and Cyprus: they are transcontinental or outright Asian, but MSCI groups them
+under "Frontier Markets Europe & CIS" and EM EMEA, so they follow MSCI and stay in Europe.
 """
 
 from __future__ import annotations
@@ -26,41 +28,38 @@ FRONTIER = "Frontier"
 FINANCIAL_CENTER = "Financial Center"
 OTHER = "Other"
 
+# Region is geography only: the development status of a market lives in Category.
 NORTH_AMERICA = "North America"
 LATIN_AMERICA = "Latin America"
-DEVELOPED_EUROPE = "Developed Europe"
-EMERGING_EUROPE = "Emerging Europe & CIS"
-MIDDLE_EAST = "Middle East"
-AFRICA = "Africa"
-DEVELOPED_ASIA = "Developed Asia Pacific"
-EMERGING_ASIA = "Emerging Asia"
-CARIBBEAN = "Caribbean"
+EUROPE = "Europe"
+MIDDLE_EAST_AFRICA = "Middle East & Africa"
+ASIA_PACIFIC = "Asia Pacific"
 
 # --- MSCI Developed Markets (23) ------------------------------------------------
 _DEVELOPED = {
     "CA": NORTH_AMERICA,
     "US": NORTH_AMERICA,
-    "AT": DEVELOPED_EUROPE,
-    "BE": DEVELOPED_EUROPE,
-    "DK": DEVELOPED_EUROPE,
-    "FI": DEVELOPED_EUROPE,
-    "FR": DEVELOPED_EUROPE,
-    "DE": DEVELOPED_EUROPE,
-    "IE": DEVELOPED_EUROPE,
-    "IT": DEVELOPED_EUROPE,
-    "NL": DEVELOPED_EUROPE,
-    "NO": DEVELOPED_EUROPE,
-    "PT": DEVELOPED_EUROPE,
-    "ES": DEVELOPED_EUROPE,
-    "SE": DEVELOPED_EUROPE,
-    "CH": DEVELOPED_EUROPE,
-    "GB": DEVELOPED_EUROPE,
-    "IL": MIDDLE_EAST,
-    "AU": DEVELOPED_ASIA,
-    "HK": DEVELOPED_ASIA,
-    "JP": DEVELOPED_ASIA,
-    "NZ": DEVELOPED_ASIA,
-    "SG": DEVELOPED_ASIA,
+    "AT": EUROPE,
+    "BE": EUROPE,
+    "DK": EUROPE,
+    "FI": EUROPE,
+    "FR": EUROPE,
+    "DE": EUROPE,
+    "IE": EUROPE,
+    "IT": EUROPE,
+    "NL": EUROPE,
+    "NO": EUROPE,
+    "PT": EUROPE,
+    "ES": EUROPE,
+    "SE": EUROPE,
+    "CH": EUROPE,
+    "GB": EUROPE,
+    "IL": MIDDLE_EAST_AFRICA,
+    "AU": ASIA_PACIFIC,
+    "HK": ASIA_PACIFIC,
+    "JP": ASIA_PACIFIC,
+    "NZ": ASIA_PACIFIC,
+    "SG": ASIA_PACIFIC,
 }
 
 # --- MSCI Emerging Markets (24) -------------------------------------------------
@@ -70,183 +69,185 @@ _EMERGING = {
     "CO": LATIN_AMERICA,
     "MX": LATIN_AMERICA,
     "PE": LATIN_AMERICA,
-    "CZ": EMERGING_EUROPE,
-    "GR": EMERGING_EUROPE,
-    "HU": EMERGING_EUROPE,
-    "PL": EMERGING_EUROPE,
-    "TR": EMERGING_EUROPE,
-    "EG": AFRICA,
-    "ZA": AFRICA,
-    "KW": MIDDLE_EAST,
-    "QA": MIDDLE_EAST,
-    "SA": MIDDLE_EAST,
-    "AE": MIDDLE_EAST,
-    "CN": EMERGING_ASIA,
-    "IN": EMERGING_ASIA,
-    "ID": EMERGING_ASIA,
-    "KR": EMERGING_ASIA,
-    "MY": EMERGING_ASIA,
-    "PH": EMERGING_ASIA,
-    "TW": EMERGING_ASIA,
-    "TH": EMERGING_ASIA,
+    "CZ": EUROPE,
+    "GR": EUROPE,
+    "HU": EUROPE,
+    "PL": EUROPE,
+    "TR": EUROPE,
+    "EG": MIDDLE_EAST_AFRICA,
+    "ZA": MIDDLE_EAST_AFRICA,
+    "KW": MIDDLE_EAST_AFRICA,
+    "QA": MIDDLE_EAST_AFRICA,
+    "SA": MIDDLE_EAST_AFRICA,
+    "AE": MIDDLE_EAST_AFRICA,
+    "CN": ASIA_PACIFIC,
+    "IN": ASIA_PACIFIC,
+    "ID": ASIA_PACIFIC,
+    "KR": ASIA_PACIFIC,
+    "MY": ASIA_PACIFIC,
+    "PH": ASIA_PACIFIC,
+    "TW": ASIA_PACIFIC,
+    "TH": ASIA_PACIFIC,
 }
 
 # --- MSCI Frontier Markets ------------------------------------------------------
 _FRONTIER = {
-    "HR": EMERGING_EUROPE,
-    "EE": EMERGING_EUROPE,
-    "IS": EMERGING_EUROPE,
-    "KZ": EMERGING_EUROPE,
-    "LT": EMERGING_EUROPE,
-    "RO": EMERGING_EUROPE,
-    "RS": EMERGING_EUROPE,
-    "SI": EMERGING_EUROPE,
-    "BH": MIDDLE_EAST,
-    "JO": MIDDLE_EAST,
-    "OM": MIDDLE_EAST,
-    "BJ": AFRICA,
-    "BF": AFRICA,
-    "GW": AFRICA,
-    "CI": AFRICA,
-    "KE": AFRICA,
-    "MU": AFRICA,
-    "MA": AFRICA,
-    "NE": AFRICA,
-    "NG": AFRICA,
-    "SN": AFRICA,
-    "TG": AFRICA,
-    "TN": AFRICA,
-    "BD": EMERGING_ASIA,
-    "PK": EMERGING_ASIA,
-    "LK": EMERGING_ASIA,
-    "VN": EMERGING_ASIA,
+    "HR": EUROPE,
+    "EE": EUROPE,
+    "IS": EUROPE,
+    "KZ": EUROPE,
+    "LT": EUROPE,
+    "RO": EUROPE,
+    "RS": EUROPE,
+    "SI": EUROPE,
+    "BH": MIDDLE_EAST_AFRICA,
+    "JO": MIDDLE_EAST_AFRICA,
+    "OM": MIDDLE_EAST_AFRICA,
+    "BJ": MIDDLE_EAST_AFRICA,
+    "BF": MIDDLE_EAST_AFRICA,
+    "GW": MIDDLE_EAST_AFRICA,
+    "CI": MIDDLE_EAST_AFRICA,
+    "KE": MIDDLE_EAST_AFRICA,
+    "MU": MIDDLE_EAST_AFRICA,
+    "MA": MIDDLE_EAST_AFRICA,
+    "NE": MIDDLE_EAST_AFRICA,
+    "NG": MIDDLE_EAST_AFRICA,
+    "SN": MIDDLE_EAST_AFRICA,
+    "TG": MIDDLE_EAST_AFRICA,
+    "TN": MIDDLE_EAST_AFRICA,
+    "BD": ASIA_PACIFIC,
+    "PK": ASIA_PACIFIC,
+    "LK": ASIA_PACIFIC,
+    "VN": ASIA_PACIFIC,
 }
 
 # --- Offshore financial centers -------------------------------------------------
 # These are not MSCI-classified markets: they show up as country-of-risk because
 # holdings and corporate vehicles are domiciled there, not because of a local market.
+# The Caribbean ones sit in Latin America, following the usual "Latin America and the
+# Caribbean" grouping; Category keeps them recognisable as Financial Center.
 _FINANCIAL_CENTERS = {
-    "KY": CARIBBEAN,   # Cayman Islands
-    "BM": CARIBBEAN,   # Bermuda
-    "VG": CARIBBEAN,   # British Virgin Islands
-    "BS": CARIBBEAN,   # Bahamas
-    "CW": CARIBBEAN,   # Curacao
-    "AN": CARIBBEAN,   # Netherlands Antilles (retired code, still used in the data)
-    "AI": CARIBBEAN,   # Anguilla
-    "TC": CARIBBEAN,   # Turks and Caicos
-    "VI": CARIBBEAN,   # US Virgin Islands
-    "JE": DEVELOPED_EUROPE,
-    "GG": DEVELOPED_EUROPE,
-    "IM": DEVELOPED_EUROPE,
-    "GI": DEVELOPED_EUROPE,
-    "MC": DEVELOPED_EUROPE,
-    "LU": DEVELOPED_EUROPE,
-    "LI": DEVELOPED_EUROPE,
-    "LR": AFRICA,      # flag of convenience, shipping
-    "MH": OTHER,       # Marshall Islands, shipping
+    "KY": LATIN_AMERICA,       # Cayman Islands
+    "BM": LATIN_AMERICA,       # Bermuda
+    "VG": LATIN_AMERICA,       # British Virgin Islands
+    "BS": LATIN_AMERICA,       # Bahamas
+    "CW": LATIN_AMERICA,       # Curacao
+    "AN": LATIN_AMERICA,       # Netherlands Antilles (retired code, still used in the data)
+    "AI": LATIN_AMERICA,       # Anguilla
+    "TC": LATIN_AMERICA,       # Turks and Caicos
+    "VI": LATIN_AMERICA,       # US Virgin Islands
+    "JE": EUROPE,
+    "GG": EUROPE,
+    "IM": EUROPE,
+    "GI": EUROPE,
+    "MC": EUROPE,
+    "LU": EUROPE,
+    "LI": EUROPE,
+    "LR": MIDDLE_EAST_AFRICA,  # flag of convenience, shipping
+    "MH": ASIA_PACIFIC,        # Marshall Islands, shipping
 }
 
 # --- MSCI Standalone / unclassified ---------------------------------------------
 # Category "Other", but the geographic region is still populated.
 _STANDALONE = {
     "AR": LATIN_AMERICA,
-    "JM": CARIBBEAN,
-    "TT": CARIBBEAN,
+    "JM": LATIN_AMERICA,
+    "TT": LATIN_AMERICA,
     "PA": LATIN_AMERICA,
-    "BA": EMERGING_EUROPE,
-    "BG": EMERGING_EUROPE,
-    "UA": EMERGING_EUROPE,
-    "RU": EMERGING_EUROPE,
-    "BY": EMERGING_EUROPE,
-    "MT": DEVELOPED_EUROPE,
-    "CY": DEVELOPED_EUROPE,
-    "SK": EMERGING_EUROPE,
-    "LV": EMERGING_EUROPE,
-    "LB": MIDDLE_EAST,
-    "PS": MIDDLE_EAST,
-    "ZW": AFRICA,
-    "GH": AFRICA,
-    "TZ": AFRICA,
-    "UG": AFRICA,
-    "ZM": AFRICA,
-    "BW": AFRICA,
-    "NA": AFRICA,
-    "MO": DEVELOPED_ASIA,
+    "BA": EUROPE,
+    "BG": EUROPE,
+    "UA": EUROPE,
+    "RU": EUROPE,
+    "BY": EUROPE,
+    "MT": EUROPE,
+    "CY": EUROPE,
+    "SK": EUROPE,
+    "LV": EUROPE,
+    "LB": MIDDLE_EAST_AFRICA,
+    "PS": MIDDLE_EAST_AFRICA,
+    "ZW": MIDDLE_EAST_AFRICA,
+    "GH": MIDDLE_EAST_AFRICA,
+    "TZ": MIDDLE_EAST_AFRICA,
+    "UG": MIDDLE_EAST_AFRICA,
+    "ZM": MIDDLE_EAST_AFRICA,
+    "BW": MIDDLE_EAST_AFRICA,
+    "NA": MIDDLE_EAST_AFRICA,
+    "MO": ASIA_PACIFIC,
     "PR": NORTH_AMERICA,   # Puerto Rico: US banks, not an MSCI market
-    "FO": DEVELOPED_EUROPE,
-    "GL": DEVELOPED_EUROPE,
-    "AD": DEVELOPED_EUROPE,
-    "SM": DEVELOPED_EUROPE,
-    "AL": EMERGING_EUROPE,
-    "MK": EMERGING_EUROPE,
-    "ME": EMERGING_EUROPE,
-    "XK": EMERGING_EUROPE,
-    "KG": EMERGING_EUROPE,
-    "TJ": EMERGING_EUROPE,
-    "TM": EMERGING_EUROPE,
-    "BN": EMERGING_ASIA,
-    "MV": EMERGING_ASIA,
-    "FJ": DEVELOPED_ASIA,
-    "NC": DEVELOPED_ASIA,
-    "AF": EMERGING_ASIA,
-    "BB": CARIBBEAN,
+    "FO": EUROPE,
+    "GL": EUROPE,
+    "AD": EUROPE,
+    "SM": EUROPE,
+    "AL": EUROPE,
+    "MK": EUROPE,
+    "ME": EUROPE,
+    "XK": EUROPE,
+    "KG": EUROPE,
+    "TJ": EUROPE,
+    "TM": EUROPE,
+    "BN": ASIA_PACIFIC,
+    "MV": ASIA_PACIFIC,
+    "FJ": ASIA_PACIFIC,
+    "NC": ASIA_PACIFIC,
+    "AF": ASIA_PACIFIC,
+    "BB": LATIN_AMERICA,
     "HN": LATIN_AMERICA,
     "NI": LATIN_AMERICA,
     "SV": LATIN_AMERICA,
     "SR": LATIN_AMERICA,
     "GY": LATIN_AMERICA,
     "BZ": LATIN_AMERICA,
-    "CG": AFRICA,
-    "MW": AFRICA,
-    "MG": AFRICA,
-    "SL": AFRICA,
-    "GN": AFRICA,
-    "GM": AFRICA,
-    "SO": AFRICA,
-    "SS": AFRICA,
-    "ER": AFRICA,
-    "DJ": AFRICA,
-    "TD": AFRICA,
-    "CF": AFRICA,
-    "GQ": AFRICA,
-    "LS": AFRICA,
-    "SZ": AFRICA,
-    "CV": AFRICA,
-    "MR": AFRICA,
-    "KH": EMERGING_ASIA,
-    "MN": EMERGING_ASIA,
-    "MM": EMERGING_ASIA,
-    "LA": EMERGING_ASIA,
-    "NP": EMERGING_ASIA,
-    "PG": DEVELOPED_ASIA,
+    "CG": MIDDLE_EAST_AFRICA,
+    "MW": MIDDLE_EAST_AFRICA,
+    "MG": MIDDLE_EAST_AFRICA,
+    "SL": MIDDLE_EAST_AFRICA,
+    "GN": MIDDLE_EAST_AFRICA,
+    "GM": MIDDLE_EAST_AFRICA,
+    "SO": MIDDLE_EAST_AFRICA,
+    "SS": MIDDLE_EAST_AFRICA,
+    "ER": MIDDLE_EAST_AFRICA,
+    "DJ": MIDDLE_EAST_AFRICA,
+    "TD": MIDDLE_EAST_AFRICA,
+    "CF": MIDDLE_EAST_AFRICA,
+    "GQ": MIDDLE_EAST_AFRICA,
+    "LS": MIDDLE_EAST_AFRICA,
+    "SZ": MIDDLE_EAST_AFRICA,
+    "CV": MIDDLE_EAST_AFRICA,
+    "MR": MIDDLE_EAST_AFRICA,
+    "KH": ASIA_PACIFIC,
+    "MN": ASIA_PACIFIC,
+    "MM": ASIA_PACIFIC,
+    "LA": ASIA_PACIFIC,
+    "NP": ASIA_PACIFIC,
+    "PG": ASIA_PACIFIC,
     "UY": LATIN_AMERICA,
     "CR": LATIN_AMERICA,
-    "DO": CARIBBEAN,
+    "DO": LATIN_AMERICA,
     "EC": LATIN_AMERICA,
     "GT": LATIN_AMERICA,
     "PY": LATIN_AMERICA,
     "BO": LATIN_AMERICA,
     "VE": LATIN_AMERICA,
-    "AZ": EMERGING_EUROPE,
-    "GE": EMERGING_EUROPE,
-    "AM": EMERGING_EUROPE,
-    "UZ": EMERGING_EUROPE,
-    "IQ": MIDDLE_EAST,
-    "IR": MIDDLE_EAST,
-    "SY": MIDDLE_EAST,
-    "YE": MIDDLE_EAST,
-    "AO": AFRICA,
-    "CM": AFRICA,
-    "CD": AFRICA,
-    "ET": AFRICA,
-    "GA": AFRICA,
-    "ML": AFRICA,
-    "MZ": AFRICA,
-    "RW": AFRICA,
-    "SC": AFRICA,
-    "SD": AFRICA,
-    "DZ": AFRICA,
-    "LY": AFRICA,
+    "AZ": EUROPE,
+    "GE": EUROPE,
+    "AM": EUROPE,
+    "UZ": EUROPE,
+    "IQ": MIDDLE_EAST_AFRICA,
+    "IR": MIDDLE_EAST_AFRICA,
+    "SY": MIDDLE_EAST_AFRICA,
+    "YE": MIDDLE_EAST_AFRICA,
+    "AO": MIDDLE_EAST_AFRICA,
+    "CM": MIDDLE_EAST_AFRICA,
+    "CD": MIDDLE_EAST_AFRICA,
+    "ET": MIDDLE_EAST_AFRICA,
+    "GA": MIDDLE_EAST_AFRICA,
+    "ML": MIDDLE_EAST_AFRICA,
+    "MZ": MIDDLE_EAST_AFRICA,
+    "RW": MIDDLE_EAST_AFRICA,
+    "SC": MIDDLE_EAST_AFRICA,
+    "SD": MIDDLE_EAST_AFRICA,
+    "DZ": MIDDLE_EAST_AFRICA,
+    "LY": MIDDLE_EAST_AFRICA,
 }
 
 _CLASSIFICATION: dict[str, tuple[str, str]] = {}
