@@ -1,0 +1,15 @@
+.DS_Store
+
+# Python tooling
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Generated constituent exports
+*.xlsx
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
