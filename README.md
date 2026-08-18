@@ -46,7 +46,7 @@ Dependencies: `requests`, `openpyxl`, `pycountry`.
 | `isin` (positional) | --                                | ISIN of the ETF, validated before any network call  |
 | `-o, --output`      | `{ISIN}_constituents_{date}.xlsx` | destination XLSX file                               |
 | `--no-expand`       | off                               | do not expand constituents that are themselves ETFs |
-| `--max-depth N`     | 3                                 | maximum expansion depth                             |
+| `--max-depth N`     | -1 (unlimited)                    | maximum expansion depth, negative for unlimited     |
 | `--enrich-ticker`   | off                               | resolve the missing Tickers via OpenFIGI            |
 | `-v, --verbose`     | off                               | detailed logging                                    |
 
@@ -63,10 +63,15 @@ difference between a few minutes and a few seconds.
 
 ## Output
 
-Sheet **`Constituents`**, one row per security, sorted by descending weight with the balancing
-row always last:
+Sheet **`Constituents`**, one row per security *per source ETF*, sorted by descending weight
+with the balancing row always last:
 
 `Ticker, ISIN, Name, Sector, Class, Country, Region, Category, Currency, Weight`
+
+When a row comes from an expanded ETF, `Name` carries that ETF in brackets --
+`Apple Inc (Vanguard FTSE All-World UCITS ETF)`. A security reached through several sub-funds
+therefore appears once per sub-fund, so the same ISIN can repeat: the weights still add up to
+100%, and a pivot on ISIN recovers the single aggregated line.
 
 `Weight` is written as an Excel percentage (`0.0000%`, so 0.0558 is rendered `5.5800%`) and the
 column adds up to exactly 100%.
@@ -133,13 +138,17 @@ not the naive geographic answer is the CIS and the Caucasus, which stay in `Euro
 that is where MSCI's "Europe & CIS" and EMEA families put them.
 
 **4. Recursive expansion.** If a constituent is itself an ETF from a supported issuer, its row
-is replaced by its own constituents, with weights rescaled on the actual child total. A
-pre-filter on class, name and ISIN avoids probing the network for all the thousands of
-positions of an equity fund. Cycles and depth are bounded; if the expansion fails the parent
-row is kept, so the weight is not lost.
+is replaced by its own constituents, with weights rescaled on the actual child total, and each
+resulting row is tagged with the ETF it came directly from. A pre-filter on class, name and ISIN
+avoids probing the network for all the thousands of positions of an equity fund. This runs all
+the way down by default: what bounds it is the cycle guard and the provider miss cache, not a
+depth limit, though `--max-depth` still caps it on request. If the expansion fails the parent row
+is kept, so the weight is not lost.
 
-**5. Aggregation.** Rows describing the same security are merged by summing their weights,
-filling empty fields from the values present in the duplicate rows.
+**5. Aggregation.** Rows describing the same security *from the same source ETF* are merged by
+summing their weights, filling empty fields from the values present in the duplicate rows. The
+source is part of the key on purpose: merging on ISIN alone would print one arbitrary ETF name
+next to a weight that came from several.
 
 **6. Balancing.** An `Other` row is appended to bring the total to exactly 100%. Below 0.1
 percentage points the residual is issuer rounding noise and the row is added silently; above

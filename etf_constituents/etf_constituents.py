@@ -49,6 +49,10 @@ COLUMNS = [
 ]
 
 BALANCING_LABEL = "Other"
+# Set on rows produced by expanding a nested ETF, and rendered into Name at the end.
+# Deliberately outside COLUMNS: write_xlsx and aggregate both iterate COLUMNS, so the
+# extra key rides along without being written or overwritten.
+SOURCE_KEY = "_Source"
 WEIGHT_TOLERANCE = 1e-9
 # Below this threshold the residual is issuer rounding noise and the balancing row is
 # added silently; above it, it is worth reporting.
@@ -110,7 +114,9 @@ def collect_rows(
     for holding in fund.holdings:
         row = build_row(holding)
 
-        if not expand or depth >= max_depth:
+        # A negative max_depth means unlimited: cycles are already bounded by `visited`
+        # and by the provider miss cache, so the depth cap is not what makes this end.
+        if not expand or (0 <= max_depth <= depth):
             rows.append(row)
             continue
         if row["ISIN"] in visited or row["ISIN"] == fund.isin.upper():
@@ -126,10 +132,11 @@ def collect_rows(
             rows.append(row)
             continue
 
+        child_name = child.name or row["Name"]
         log.info(
             "  expanding %s %s (%.4f%%) -> %d constituents",
             row["ISIN"],
-            child.name or row["Name"],
+            child_name,
             row["Weight"],
             len(child.holdings),
         )
@@ -152,6 +159,9 @@ def collect_rows(
         for child_row in child_rows:
             scaled = dict(child_row)
             scaled["Weight"] = child_row["Weight"] * factor
+            # setdefault, not assignment: the deepest level got there first, and the row
+            # should name the ETF it came from directly, not every one above it.
+            scaled.setdefault(SOURCE_KEY, child_name)
             rows.append(Row(scaled))
 
     return rows
@@ -163,10 +173,16 @@ def collect_rows(
 
 
 def aggregate(rows: list[Row]) -> list[Row]:
-    """Sum the weights of the rows describing the same security."""
+    """Sum the weights of the rows describing the same security in the same source ETF.
+
+    The source is part of the key because a security reached through several sub-funds
+    has to keep them apart: merging on ISIN alone would leave one arbitrary ETF name on a
+    weight that came from all of them.
+    """
     merged: dict[tuple, Row] = {}
     for row in rows:
-        key = (row["ISIN"],) if row["ISIN"] else ("", row["Name"], row["Currency"])
+        source = row.get(SOURCE_KEY, "")
+        key = (row["ISIN"], source) if row["ISIN"] else ("", row["Name"], row["Currency"], source)
         existing = merged.get(key)
         if existing is None:
             merged[key] = Row(row)
@@ -176,6 +192,15 @@ def aggregate(rows: list[Row]) -> list[Row]:
             if column != "Weight" and not existing[column] and row[column]:
                 existing[column] = row[column]
     return list(merged.values())
+
+
+def label_sources(rows: list[Row]) -> list[Row]:
+    """Append the source ETF, in brackets, to the Name of every expanded row."""
+    for row in rows:
+        source = row.get(SOURCE_KEY)
+        if source:
+            row["Name"] = f"{row['Name']} ({source})".strip()
+    return rows
 
 
 def add_balancing_row(rows: list[Row]) -> list[Row]:
@@ -342,7 +367,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="do not expand constituents that are themselves ETFs",
     )
     parser.add_argument(
-        "--max-depth", type=int, default=3, help="maximum expansion depth"
+        "--max-depth",
+        type=int,
+        default=-1,
+        help="maximum expansion depth, negative for unlimited",
     )
     parser.add_argument(
         "--enrich-ticker",
@@ -351,6 +379,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="detailed logging")
     return parser.parse_args(argv)
+
+
+def _expansion_summary(args: argparse.Namespace) -> str:
+    if args.no_expand:
+        return "off"
+    if args.max_depth < 0:
+        return "on (unlimited depth)"
+    return f"on (max depth {args.max_depth})"
 
 
 def default_output_name(isin: str, as_of: str) -> str:
@@ -386,10 +422,11 @@ def main(argv: list[str] | None = None) -> int:
         fund,
         registry,
         expand=not args.no_expand,
-        max_depth=max(0, args.max_depth),
+        max_depth=args.max_depth,
     )
     leaf_count = len(rows)
     rows = aggregate(rows)
+    rows = label_sources(rows)
     rows = add_balancing_row(rows)
     rows = sort_rows(rows)
 
@@ -408,7 +445,7 @@ def main(argv: list[str] | None = None) -> int:
         "Direct holdings": len(fund.holdings),
         "Leaf rows before aggregation": leaf_count,
         "Rows in output": len(rows),
-        "Nested ETF expansion": "off" if args.no_expand else f"on (max depth {args.max_depth})",
+        "Nested ETF expansion": _expansion_summary(args),
         "Ticker enrichment": "OpenFIGI" if args.enrich_ticker else "off",
         "Generated at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
     }
