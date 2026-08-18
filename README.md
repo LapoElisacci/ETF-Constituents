@@ -119,12 +119,12 @@ Vanguard fund. The inference is an indication, not a fact: see the limitations b
 
 The normalized columns take values from closed sets:
 
-| Column     | Values                                                                                                                                                                  |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Class`    | `Equity`, `Fixed Income`, `Cash`, `Derivative`, `Fund`, `Commodity`, `Other`                                                                                            |
-| `Sector`   | the 11 GICS sectors, plus `Government`, `Cash & Derivatives`, `Other`                                                                                                   |
-| `Category` | `Developed`, `Emerging`, `Frontier`, `Financial Center`, `Other`                                                                                                        |
-| `Region`   | `North America`, `Latin America`, `Europe`, `Middle East & Africa`, `Asia Pacific`, `Other`                                                                             |
+| Column     | Values                                                                                      |
+| ---------- | ------------------------------------------------------------------------------------------- |
+| `Class`    | `Equity`, `Fixed Income`, `Cash`, `Derivative`, `Fund`, `Commodity`, `Other`                |
+| `Sector`   | the 11 GICS sectors, plus `Government`, `Cash & Derivatives`, `Other`                       |
+| `Category` | `Developed`, `Emerging`, `Frontier`, `Financial Center`, `Other`                            |
+| `Region`   | `North America`, `Latin America`, `Europe`, `Middle East & Africa`, `Asia Pacific`, `Other` |
 
 ## How it works
 
@@ -190,7 +190,7 @@ summing their weights, filling empty fields from the values present in the dupli
 source is part of the key on purpose: merging on ISIN alone would print one arbitrary ETF name
 next to a weight that came from several.
 
-**6. Balancing.** An `Other` row is appended to bring the total to exactly 100%. Below 0.1
+**6. Balancing.** A `Weight balance` row is appended to bring the total to exactly 100%. Below 0.1
 percentage points the residual is issuer rounding noise and the row is added silently; above
 it, it is reported with a warning.
 

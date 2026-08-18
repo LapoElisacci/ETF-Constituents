@@ -49,7 +49,7 @@ COLUMNS = [
     "Weight",
 ]
 
-BALANCING_LABEL = "Other"
+BALANCING_LABEL = "Weight balance"
 # Set on rows produced by expanding a nested ETF, and rendered into Name at the end.
 # Deliberately outside COLUMNS: write_xlsx and aggregate both iterate COLUMNS, so the
 # extra key rides along without being written or overwritten.
