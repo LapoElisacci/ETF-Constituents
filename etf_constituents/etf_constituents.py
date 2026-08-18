@@ -29,6 +29,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 
+import currency
 import msci
 import taxonomy
 from providers import Fund, Holding, ProviderError, ProviderRegistry, is_valid_isin
@@ -79,7 +80,8 @@ def build_row(holding: Holding) -> Row:
         Country=country,
         Region=region,
         Category=category,
-        Currency=holding.currency,
+        # Not every issuer prices its holdings: fall back to the country's currency.
+        Currency=holding.currency or currency.from_country(holding.country_raw),
         Weight=holding.weight,
     )
 
@@ -417,6 +419,7 @@ def main(argv: list[str] | None = None) -> int:
 
     taxonomy.report_unknown()
     msci.report_unresolved()
+    currency.report_unmapped()
 
     output = args.output or default_output_name(isin, fund.as_of)
     write_xlsx(output, rows)

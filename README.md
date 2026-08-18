@@ -55,6 +55,7 @@ etf_constituents/
   providers.py          downloads per issuer and issuer detection (ProviderRegistry)
   taxonomy.py           Sector and Class normalization
   msci.py               Country -> Region/Category per the MSCI Market Classification
+  currency.py           fallback Currency inferred from the country
   requirements.txt
 ```
 
@@ -112,6 +113,10 @@ therefore appears once per sub-fund, so the same ISIN can repeat: the weights st
 `Weight` is written as an Excel percentage (`0.0000%`, so 0.0558 is rendered `5.5800%`) and the
 column adds up to exactly 100%.
 
+`Currency` is taken from the issuer when it publishes one. When it does not -- Vanguard never
+does -- it is inferred from the country, which fills it on about 99.99% of the weight of a
+Vanguard fund. The inference is an indication, not a fact: see the limitations below.
+
 The normalized columns take values from closed sets:
 
 | Column     | Values                                                                                                                                                                  |
@@ -161,6 +166,9 @@ As a cross-check: across the 1277 securities shared by the iShares MSCI World ET
 Xtrackers one, after normalization the `Class` values match 100% and the `Sector` values
 diverge on 2 securities, because of real differences in the two issuers' data.
 
+`Currency` comes straight from the issuer where it exists. Where it does not, `currency.py`
+derives it from the country, so the column is usable rather than empty.
+
 `Region` and `Category` follow the MSCI Market Classification (`msci.py`), on a static table
 keyed by ISO code: issuers use non-ISO names (`Croatia (Hrvatska)`, and a `British Vergin
 Islands` with a typo in the DWS export) and resolving them to a code before classifying avoids
@@ -197,9 +205,15 @@ it, it is reported with a warning.
 - **Sector on Xtrackers bonds**: DWS leaves the sector classification as `unknown` on fixed
   income, so `Sector` comes out as `Other`. iShares does populate it. This is a difference in
   the source data, not in the normalization.
-- **Vanguard currency**: the GraphQL schema has no per-holding currency field, so the
-  `Currency` column stays empty for Vanguard funds -- the mirror image of the missing Xtrackers
-  ticker, except there is no equivalent of `--enrich-ticker` to fill it in.
+- **Inferred currency**: the Vanguard GraphQL schema has no per-holding currency field at all,
+  so for Vanguard funds the whole column is derived from the country rather than read from the
+  source. The country is the issuer's country of risk or of incorporation, which is not
+  necessarily where the security trades: a Hong Kong listing of a mainland Chinese company comes
+  out `CNY`, not `HKD`. Countries with no local market for securities -- offshore centres,
+  dollarised economies -- are mapped to their de facto currency, since nothing is really priced
+  in `KYD` or `MOP`. Rows with no attributable country, chiefly FX forwards and supranational
+  paper, keep an empty `Currency`. Treat the column as an indication on Vanguard funds and read
+  it from the issuer's own files when it matters.
 - **Sector on Vanguard bonds**: as with Xtrackers, part of the fixed income book carries no
   sector classification and comes out as `Other`.
 - **Country**: iShares uses country-of-risk, Xtrackers the country of incorporation, Vanguard
