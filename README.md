@@ -8,14 +8,15 @@ them to an XLSX. Normalization is the point: different issuers describe the same
 with different sectors, asset classes and country names, so without a shared vocabulary two
 funds are not comparable and cannot be summed into a portfolio.
 
-Supported issuers: **iShares** (BlackRock) and **Xtrackers** (DWS).
+Supported issuers: **iShares** (BlackRock), **Xtrackers** (DWS) and **Vanguard**
+(European UCITS range and US-domiciled ETFs alike).
 
 ## Repo layout
 
 ```
 etf_constituents/
   etf_constituents.py   CLI entry point: recursive expansion, aggregation, balancing, XLSX
-  providers.py          downloads from iShares/Xtrackers and issuer detection (ProviderRegistry)
+  providers.py          downloads per issuer and issuer detection (ProviderRegistry)
   taxonomy.py           Sector and Class normalization
   msci.py               Country -> Region/Category per the MSCI Market Classification
   requirements.txt
@@ -87,10 +88,10 @@ The normalized columns take values from closed sets:
 
 The pipeline, in execution order.
 
-**1. Issuer detection.** `ProviderRegistry` tries Xtrackers first, which costs a single HTTP
-request, then iShares, which costs several. The cache also stores negative outcomes: during
-recursive expansion the same ISIN recurs in several sub-funds and every attempt is a network
-call.
+**1. Issuer detection.** `ProviderRegistry` probes cheapest first: Xtrackers and Vanguard each
+answer definitively in a single HTTP request, iShares needs a search plus a confirmation per
+candidate. The cache also stores negative outcomes: during recursive expansion the same ISIN
+recurs in several sub-funds and every attempt is a network call.
 
 **2. Download.** The sources are the same ones that feed the official product pages.
 
@@ -102,10 +103,19 @@ call.
   percentage points (on IEAC, 101.79% against 99.9998%).
 - Xtrackers: the CSV constituents export is addressable directly by ISIN. Weights come as a
   fraction and are converted to percentage points.
+- Vanguard: the product page renders only the top ten holdings, so the full list comes from the
+  GraphQL endpoint the page itself calls. `funds(isins:)` maps the ISIN to Vanguard's internal
+  `portId` in one request and returns an empty list for anything that is not a Vanguard fund,
+  which is what makes it cheap to probe. The holdings then come from `borHoldings`, 1500 at a
+  time, following an opaque cursor. Two deliberate choices: the `securityTypes` filter the site
+  applies is left unset, because it drops cash, FX and futures and leaves the weights at ~99.2%
+  instead of 100%; and `holdings` is used rather than `delayeredHoldings`, which is Vanguard's
+  own look-through of a fund of funds, since nested funds are expanded below instead.
 
 **3. Normalization.** iShares uses *two* sector vocabularies (GICS-like on equity,
 ICE/Bloomberg-like on fixed income: `Banking`, `Consumer Non-Cyclical`, `Basic Industry`...),
-Xtrackers a third one. `taxonomy.py` maps them back to the 11 GICS sectors plus `Government`,
+Xtrackers a third one, Vanguard reports GICS and ICB side by side (GICS is preferred, ICB is
+the fallback). `taxonomy.py` maps them back to the 11 GICS sectors plus `Government`,
 `Cash & Derivatives` and `Other`, and unifies the asset classes. An unmapped raw value ends up
 in `Other` **with a warning on stderr**, so the tables get extended instead of degrading
 silently.
@@ -143,7 +153,13 @@ it, it is reported with a warning.
 - **Sector on Xtrackers bonds**: DWS leaves the sector classification as `unknown` on fixed
   income, so `Sector` comes out as `Other`. iShares does populate it. This is a difference in
   the source data, not in the normalization.
-- **Country**: iShares uses country-of-risk, Xtrackers the country of incorporation. On the
+- **Vanguard currency**: the GraphQL schema has no per-holding currency field, so the
+  `Currency` column stays empty for Vanguard funds -- the mirror image of the missing Xtrackers
+  ticker, except there is no equivalent of `--enrich-ticker` to fill it in.
+- **Sector on Vanguard bonds**: as with Xtrackers, part of the fixed income book carries no
+  sector classification and comes out as `Other`.
+- **Country**: iShares uses country-of-risk, Xtrackers the country of incorporation, Vanguard
+  the Bloomberg ISO country. On the
   same index this produces about twenty different `Region` values between the two issuers
   (typically companies incorporated in the Netherlands, Ireland or the Cayman Islands but
   operating in the US).

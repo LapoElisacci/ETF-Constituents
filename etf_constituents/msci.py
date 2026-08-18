@@ -314,6 +314,9 @@ _NAME_ALIASES: dict[str, str | None] = {
     "TRINIDAD AND TOBAGO": "TT",
     "UNITED ARAB EMIRATES": "AE",
     # Non-countries that issuers use as country-of-risk
+    "MULT": None,           # Vanguard: multinational issuer
+    "SNAT": None,           # Vanguard: supranational
+    "XE": None,             # Vanguard: euro area
     "EUROPEAN UNION": None,
     "SUPRANATIONAL": None,
     "MULTINATIONAL": None,
@@ -368,9 +371,12 @@ def classify(country: str | None) -> tuple[str, str, str]:
     """Return (normalized_country, region, category)."""
     code = resolve_country_code(country)
     if code is None:
-        if country and country.strip() not in {"", "-", "--"}:
-            _unresolved_countries.add(country.strip())
-        return (country or "").strip() or OTHER, OTHER, OTHER
+        raw = (country or "").strip()
+        # A value explicitly aliased to None is a deliberate "not attributable", not a
+        # gap in the table: reporting it every run would be noise.
+        if raw not in {"", "-", "--"} and _normalize_name(raw) not in _NAME_ALIASES:
+            _unresolved_countries.add(raw)
+        return raw or OTHER, OTHER, OTHER
 
     try:
         display = pycountry.countries.get(alpha_2=code).name

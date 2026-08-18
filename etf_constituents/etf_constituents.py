@@ -2,7 +2,7 @@
 """Download the constituents of an ETF from the official issuer documents and export
 them to a normalized XLSX.
 
-Supported issuers: iShares (BlackRock), Xtrackers (DWS).
+Supported issuers: iShares (BlackRock), Xtrackers (DWS), Vanguard.
 
     python etf_constituents.py IE00B4L5Y983
     python etf_constituents.py LU0397221945 -o portfolio.xlsx --enrich-ticker
@@ -331,7 +331,7 @@ def write_xlsx(path: str, rows: list[Row], meta: dict[str, object]) -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Download the constituents of an ETF (iShares, Xtrackers) to XLSX.",
+        description="Download the constituents of an ETF (iShares, Xtrackers, Vanguard) to XLSX.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("isin", help="ISIN of the ETF")

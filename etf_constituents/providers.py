@@ -1,6 +1,6 @@
 """Download of constituents from the official documents of the supported issuers.
 
-Issuers: iShares (BlackRock) and Xtrackers (DWS).
+Issuers: iShares (BlackRock), Xtrackers (DWS) and Vanguard.
 
 Every provider exposes `fetch(isin)` and returns a `Fund` whose weights are already
 expressed in percentage points, leaving sector/asset class/country in the raw issuer
@@ -407,6 +407,187 @@ class XtrackersProvider:
 
 
 # ---------------------------------------------------------------------------
+# Vanguard
+# ---------------------------------------------------------------------------
+
+
+class VanguardProvider:
+    """Constituents from the GraphQL endpoint behind the Vanguard product pages.
+
+    The product page itself renders only the top ten holdings; the full list comes from
+    the same `gpx/graphql` endpoint the page calls, paginated by an opaque cursor.
+    """
+
+    name = "Vanguard"
+
+    GRAPHQL_URL = "https://www.vanguard.co.uk/gpx/graphql"
+    # Sent by the site on every call; without it the endpoint replies
+    # "x-consumer-id must be provided".
+    CONSUMER_ID = "uk2"
+    PAGE_LIMIT = 1500
+    # The largest fund seen is the Global Aggregate Bond ETF at ~13600 holdings, so ten
+    # pages; the cap only exists so a broken cursor cannot loop forever.
+    MAX_PAGES = 40
+
+    _PROFILE_QUERY = """
+        query FundProfile($isins: [String!]) {
+          funds(isins: $isins) {
+            profile { portId fundFullName fundCurrency }
+          }
+        }
+    """
+
+    # `securityTypes` is deliberately left unset: the site filters it down to equity and
+    # bond codes, which drops cash, FX and futures and leaves the weights at ~99.2%.
+    # `holdings` and not `delayeredHoldings`: the latter is the issuer's own look-through
+    # of a fund of funds, and nested funds are expanded upstream instead.
+    # `limit` is inlined rather than passed as a variable: the schema does not declare
+    # an `Int` type, so `$limit: Int` fails validation.
+    _HOLDINGS_QUERY = """
+        query FundsHoldingsQuery($portIds: [String!], $lastItemKey: String) {
+          borHoldings(portIds: $portIds) {
+            holdings(limit: %d, lastItemKey: $lastItemKey) {
+              items {
+                issuerName
+                securityLongDescription
+                isin
+                ticker
+                securityType
+                gicsSectorDescription
+                icbIndustryDescription
+                marketValuePercentage
+                bloombergIsoCountry
+                effectiveDate
+              }
+              lastItemKey
+            }
+          }
+        }
+    """ % PAGE_LIMIT
+
+    # Vanguard codes the instrument type rather than the asset class, but the prefix
+    # carries it. The values are the raw words `taxonomy.normalize_class` already knows.
+    _FUND_TYPES = frozenset({"EQ.ETF", "MF.MF"})
+    _CLASS_BY_TYPE = {"CRNY": "Cash"}
+    _CLASS_BY_PREFIX = (
+        ("EQ.", "Equity"),
+        ("FI.", "Fixed Income"),
+        ("MM.", "Cash"),        # money market: T-bills, CDs, commercial paper
+        ("CT.", "Derivative"),  # FX forwards, spots, portfolio swaps
+        ("DE.", "Derivative"),  # index and commodity futures
+    )
+
+    def __init__(self, session: requests.Session):
+        self.session = session
+
+    def _graphql(self, query: str, variables: dict) -> dict:
+        response = self.session.post(
+            self.GRAPHQL_URL,
+            json={"query": query, "variables": variables},
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "X-Consumer-ID": self.CONSUMER_ID,
+            },
+            timeout=TIMEOUT,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("errors"):
+            message = str(payload["errors"][0].get("message", ""))
+            raise ProviderError(f"Vanguard GraphQL error: {message[:200]}")
+        return payload.get("data") or {}
+
+    def resolve(self, isin: str) -> dict | None:
+        """ISIN -> fund profile, or None when it is not a Vanguard fund.
+
+        One request, and an unknown ISIN comes back as an empty list, so this doubles as
+        a cheap issuer probe.
+        """
+        try:
+            data = self._graphql(self._PROFILE_QUERY, {"isins": [isin.strip().upper()]})
+        except (requests.RequestException, ValueError, ProviderError) as exc:
+            log.debug("Vanguard profile lookup failed for %s: %s", isin, exc)
+            return None
+        funds = data.get("funds") or []
+        profile = (funds[0] or {}).get("profile") if funds else None
+        return profile if profile and profile.get("portId") else None
+
+    def fetch(self, isin: str, profile: dict | None = None) -> Fund:
+        profile = profile if profile is not None else self.resolve(isin)
+        if profile is None:
+            raise ProviderError(f"{isin} does not appear to be a Vanguard ETF")
+        port_id = str(profile["portId"])
+
+        items: list[dict] = []
+        last_item_key = None
+        for _ in range(self.MAX_PAGES):
+            try:
+                data = self._graphql(
+                    self._HOLDINGS_QUERY,
+                    {"portIds": [port_id], "lastItemKey": last_item_key},
+                )
+            except (requests.RequestException, ValueError) as exc:
+                raise ProviderError(
+                    f"Vanguard constituents download failed for {isin}: {exc}"
+                ) from exc
+            containers = data.get("borHoldings") or []
+            page = (containers[0] or {}).get("holdings") if containers else None
+            if not page:
+                break
+            items.extend(page.get("items") or [])
+            last_item_key = page.get("lastItemKey")
+            if not last_item_key:
+                break
+        else:
+            log.warning("Vanguard: stopped %s after %d pages", isin, self.MAX_PAGES)
+
+        if not items:
+            raise ProviderError(f"no constituent returned for {isin}")
+
+        holdings = []
+        for item in items:
+            holdings.append(
+                Holding(
+                    isin=(item.get("isin") or "").strip().upper(),
+                    ticker=(item.get("ticker") or "").strip(),
+                    # Cash and FX rows carry only the long description.
+                    name=(item.get("securityLongDescription") or item.get("issuerName") or "").strip(),
+                    sector_raw=(
+                        item.get("gicsSectorDescription") or item.get("icbIndustryDescription") or ""
+                    ).strip(),
+                    asset_class_raw=self._infer_class(item.get("securityType")),
+                    country_raw=(item.get("bloombergIsoCountry") or "").strip(),
+                    currency="",  # no per-holding currency in the schema
+                    weight=_to_float(item.get("marketValuePercentage")),
+                )
+            )
+
+        return Fund(
+            isin=isin,
+            name=(profile.get("fundFullName") or "").strip(),
+            issuer=self.name,
+            as_of=(items[0].get("effectiveDate") or "").strip(),
+            holdings=holdings,
+        )
+
+    @classmethod
+    def _infer_class(cls, security_type: str | None) -> str:
+        code = (security_type or "").strip().upper()
+        if code in cls._FUND_TYPES:
+            return "Fund"  # checked first: EQ.ETF would also match the EQ. prefix
+        if code in cls._CLASS_BY_TYPE:
+            return cls._CLASS_BY_TYPE[code]
+        for prefix, asset_class in cls._CLASS_BY_PREFIX:
+            if code.startswith(prefix):
+                return asset_class
+        # Unknown code: pass it through so it surfaces in the unmapped-values warning
+        # instead of being silently bucketed.
+        return code
+
+
+
+# ---------------------------------------------------------------------------
 # Issuer detection
 # ---------------------------------------------------------------------------
 
@@ -422,11 +603,16 @@ class ProviderRegistry:
         self.session = session or build_session()
         self.ishares = IsharesProvider(self.session)
         self.xtrackers = XtrackersProvider(self.session)
+        self.vanguard = VanguardProvider(self.session)
         self._funds: dict[str, Fund] = {}
         self._misses: set[str] = set()
 
     def fetch(self, isin: str) -> Fund:
-        """Download the constituents, trying Xtrackers (1 request) before iShares."""
+        """Download the constituents, cheapest issuer probe first.
+
+        Xtrackers and Vanguard each answer definitively in one request; iShares needs a
+        search plus a confirmation per candidate, so it goes last.
+        """
         key = isin.strip().upper()
         if key in self._funds:
             return self._funds[key]
@@ -439,6 +625,11 @@ class ProviderRegistry:
             self._funds[key] = fund
             return fund
 
+        profile = self.vanguard.resolve(key)
+        if profile is not None:
+            fund = self.vanguard.fetch(key, profile=profile)
+            self._funds[key] = fund
+            return fund
 
         try:
             fund = self.ishares.fetch(key)
@@ -446,7 +637,7 @@ class ProviderRegistry:
             self._misses.add(key)
             raise ProviderError(
                 f"{key}: unsupported issuer or non-existent ISIN "
-                "(supported: iShares, Xtrackers)"
+                "(supported: iShares, Xtrackers, Vanguard)"
             ) from None
 
         self._funds[key] = fund
