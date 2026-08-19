@@ -3,7 +3,7 @@
 them to a normalized XLSX.
 
 Supported issuers: iShares (BlackRock), Xtrackers (DWS), Vanguard, SPDR (State Street),
-Amundi.
+Amundi. UBS is supported from a downloaded workbook, via --holdings-file.
 
     python etf_constituents.py IE00B4L5Y983
     python etf_constituents.py LU0397221945 -o portfolio.xlsx --enrich-ticker
@@ -33,7 +33,14 @@ from openpyxl.utils import get_column_letter
 import currency
 import msci
 import taxonomy
-from providers import Fund, Holding, ProviderError, ProviderRegistry, is_valid_isin
+from providers import (
+    Fund,
+    Holding,
+    ProviderError,
+    ProviderRegistry,
+    UbsFileProvider,
+    is_valid_isin,
+)
 
 log = logging.getLogger("etf_constituents")
 
@@ -356,12 +363,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Download the constituents of an ETF "
-            "(iShares, Xtrackers, Vanguard, SPDR, Amundi) to XLSX."
+            "(iShares, Xtrackers, Vanguard, SPDR, Amundi; UBS via --holdings-file) to XLSX."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("isin", help="ISIN of the ETF")
     parser.add_argument("-o", "--output", help="destination XLSX file")
+    parser.add_argument(
+        "--holdings-file",
+        metavar="PATH",
+        help="read the constituents from a downloaded workbook instead of the issuer API "
+        "(UBS, whose holdings are not reachable programmatically)",
+    )
     parser.add_argument(
         "--no-expand",
         action="store_true",
@@ -403,7 +416,10 @@ def main(argv: list[str] | None = None) -> int:
 
     registry = ProviderRegistry()
     try:
-        fund = registry.fetch(isin)
+        if args.holdings_file:
+            fund = UbsFileProvider().fetch(isin, args.holdings_file)
+        else:
+            fund = registry.fetch(isin)
     except ProviderError as exc:
         log.error("%s", exc)
         return 1

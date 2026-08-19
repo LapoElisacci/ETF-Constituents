@@ -1,6 +1,7 @@
 """Download of constituents from the official documents of the supported issuers.
 
-Issuers: iShares (BlackRock), Xtrackers (DWS), Vanguard, SPDR (State Street) and Amundi.
+Issuers: iShares (BlackRock), Xtrackers (DWS), Vanguard, SPDR (State Street) and Amundi,
+plus UBS from a workbook the user downloads (see UbsFileProvider).
 
 Every provider exposes `fetch(isin)` and returns a `Fund` whose weights are already
 expressed in percentage points, leaving sector/asset class/country in the raw issuer
@@ -1005,6 +1006,177 @@ class AmundiProvider:
         # Unknown code: pass it through so it surfaces in the unmapped-values warning
         # instead of being silently bucketed.
         return code
+
+
+# ---------------------------------------------------------------------------
+# UBS
+# ---------------------------------------------------------------------------
+
+
+class UbsFileProvider:
+    """Constituents from a workbook the user downloaded from the UBS product page.
+
+    UBS is the one issuer that is not fetched. Its holdings sit behind a GraphQL endpoint
+    that validates an Azure AD token minted for the product page, and that page is
+    geo-restricted: outside the permitted regions it serves an empty placeholder instead
+    of the app, so there is nothing to read the token out of. The endpoint carries exactly
+    the same six columns as the "Costituenti" download anyway, so reading the file costs
+    no information.
+
+    This provider therefore takes a path instead of an ISIN, and stays out of the
+    ProviderRegistry probe ladder.
+    """
+
+    name = "UBS"
+
+    # The download is OOXML despite its .xls extension; openpyxl refuses the path on the
+    # extension alone, so it is always handed a file object.
+    _COLUMNS = {
+        "name": ("Titolo", "Securities", "Wertpapiere", "Titres"),
+        "isin": ("ISIN",),
+        "currency": ("Valuta", "Currency", "Währung", "Devise"),
+        "weight": ("Ponderazione %", "Weight %", "Gewichtung (%)", "Pondération (%)"),
+    }
+    # Column order of the export, used when a locale spells a header we do not know.
+    _FALLBACK_ORDER = ("name", "isin", None, "currency", None, "weight")
+    _ISIN_HEADER = "ISIN"
+    _HEADER_SCAN_ROWS = 20
+    # ISIN_RE is anchored; the header block embeds the code in a label
+    # ("ISIN: : LU0977261329"), so matching inside text needs its own pattern.
+    _ISIN_IN_TEXT = re.compile(r"\b[A-Z]{2}[A-Z0-9]{9}[0-9]\b")
+    # "Fonte: State Street, 17.08.2026" / "Source: State Street, 17.08.2026"
+    _AS_OF_RE = re.compile(r"(\d{2})[.](\d{2})[.](\d{4})")
+
+    def fetch(self, isin: str, path: str) -> Fund:
+        key = isin.strip().upper()
+        rows = self._sheet_rows(path)
+
+        header = None
+        for index, row in enumerate(rows[: self._HEADER_SCAN_ROWS]):
+            if any(str(cell).strip() == self._ISIN_HEADER for cell in row if cell):
+                header = index
+                break
+        if header is None:
+            raise ProviderError(f"{path}: not a UBS constituents export")
+
+        # The workbook states the fund it belongs to, so it validates itself.
+        file_isin = self._find_isin(rows[:header])
+        if not file_isin:
+            log.warning("%s states no ISIN: cannot confirm it holds %s", path, key)
+        elif file_isin != key:
+            raise ProviderError(f"{path} holds {file_isin}, not {key}")
+
+        columns = [str(cell).strip() if cell is not None else "" for cell in rows[header]]
+        at = {}
+        for field_name, names in self._COLUMNS.items():
+            index = next((columns.index(n) for n in names if n in columns), None)
+            if index is None and field_name in self._FALLBACK_ORDER:
+                index = self._FALLBACK_ORDER.index(field_name)
+            at[field_name] = index
+
+        def cell(row: tuple, field_name: str) -> str:
+            index = at[field_name]
+            if index is None or index >= len(row) or row[index] is None:
+                return ""
+            return str(row[index]).strip()
+
+        data = [row for row in rows[header + 1 :] if is_valid_isin(cell(row, "isin"))]
+        if not data:
+            raise ProviderError(f"no constituent returned for {key}")
+
+        weights = self._parse_weights([cell(row, "weight") for row in data])
+
+        holdings = []
+        for row, weight in zip(data, weights):
+            constituent = cell(row, "isin").upper()
+            holdings.append(
+                Holding(
+                    isin=constituent,
+                    ticker="",  # the export carries a SEDOL, not a ticker
+                    name=cell(row, "name"),
+                    sector_raw="",   # UBS publishes neither sector
+                    asset_class_raw="",  # nor asset class
+                    # No country column either: the ISIN prefix is the country of
+                    # registration, which msci resolves directly from the alpha-2 code.
+                    country_raw=constituent[:2],
+                    currency=cell(row, "currency"),
+                    weight=weight,
+                )
+            )
+
+        return Fund(
+            isin=key,
+            name=self._fund_name(rows[:header]),
+            issuer=self.name,
+            as_of=self._as_of(rows[header + 1 :]),
+            holdings=holdings,
+        )
+
+    @staticmethod
+    def _sheet_rows(path: str) -> list[tuple]:
+        try:
+            payload = open(path, "rb").read()
+        except OSError as exc:
+            raise ProviderError(f"cannot read {path}: {exc}") from exc
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            try:
+                book = openpyxl.load_workbook(io.BytesIO(payload), read_only=True, data_only=True)
+            except Exception as exc:  # openpyxl surfaces zipfile/XML errors as-is
+                raise ProviderError(f"{path} is not a readable workbook: {exc}") from exc
+            try:
+                return list(book.active.iter_rows(values_only=True))
+            finally:
+                book.close()
+
+    @classmethod
+    def _parse_weights(cls, raw: list[str]) -> list[float]:
+        """Weights, read without having to know the locale of the download.
+
+        The export follows the language of the site it came from: "14,98683" from the
+        Italian one, "14.98683" from the English one. Rather than detect that, both
+        readings are tried and the one totalling 100 wins - which the column always does.
+        """
+        european = [cls._number(value, thousands=".", decimal=",") for value in raw]
+        anglo = [cls._number(value, thousands=",", decimal=".") for value in raw]
+        return min((anglo, european), key=lambda values: abs(sum(values) - 100.0))
+
+    @staticmethod
+    def _number(value: str, *, thousands: str, decimal: str) -> float:
+        cleaned = value.replace(thousands, "").replace(decimal, ".").replace("%", "").strip()
+        try:
+            return float(cleaned)
+        except ValueError:
+            return 0.0
+
+    @classmethod
+    def _find_isin(cls, rows: list[tuple]) -> str:
+        for row in rows:
+            for cell in row:
+                match = cls._ISIN_IN_TEXT.search(str(cell).upper()) if cell else None
+                if match:
+                    return match.group(0)
+        return ""
+
+    @classmethod
+    def _fund_name(cls, rows: list[tuple]) -> str:
+        for row in rows:
+            for cell in row:
+                text = str(cell).strip() if cell else ""
+                # Skip the "ISIN: : LU..." line and anything else that is just a label.
+                if text and not cls._ISIN_IN_TEXT.search(text.upper()):
+                    return text
+        return ""
+
+    @classmethod
+    def _as_of(cls, rows: list[tuple]) -> str:
+        for row in rows:
+            for cell in row:
+                match = cls._AS_OF_RE.search(str(cell)) if cell else None
+                if match:
+                    day, month, year = match.groups()
+                    return f"{year}-{month}-{day}"
+        return ""
 
 
 # ---------------------------------------------------------------------------

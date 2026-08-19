@@ -11,7 +11,9 @@ funds are not comparable and cannot be summed into a portfolio.
 Supported issuers: **iShares** (BlackRock), **Xtrackers** (DWS), **Vanguard**,
 **SPDR** (State Street) and **Amundi** (including the absorbed Lyxor range). iShares,
 Xtrackers and Vanguard cover the European UCITS range and US-domiciled ETFs alike; SPDR
-covers the UCITS range only (see the limitations below).
+covers the UCITS range only (see the limitations below). **UBS** is supported from a
+workbook you download yourself, via `--holdings-file`: its holdings are not reachable
+programmatically (see the limitations below).
 
 ## Disclaimer
 
@@ -40,8 +42,9 @@ annual and semi-annual reports, and the issuer's own published holdings files --
 only authoritative sources.
 
 This project is not affiliated with, endorsed by, sponsored by or otherwise connected to
-BlackRock (iShares), DWS (Xtrackers), Vanguard, State Street (SPDR), Amundi (Lyxor), MSCI,
-FTSE Russell, S&P, ICE, Bloomberg, OpenFIGI or any other party named in this repository. All
+BlackRock (iShares), DWS (Xtrackers), Vanguard, State Street (SPDR), Amundi (Lyxor), UBS,
+MSCI, FTSE Russell, S&P, ICE, Bloomberg, OpenFIGI or any other party named in this
+repository. All
 trademarks, index names and fund names are the property of their respective owners and are used
 here for identification only.
 You are solely responsible for ensuring that your use of the third-party endpoints complies with
@@ -88,6 +91,7 @@ Dependencies: `requests`, `openpyxl`, `pycountry`.
 | `-o, --output`      | `{ISIN}_constituents_{date}.xlsx` | destination XLSX file                               |
 | `--no-expand`       | off                               | do not expand constituents that are themselves ETFs |
 | `--max-depth N`     | -1 (unlimited)                    | maximum expansion depth, negative for unlimited     |
+| `--holdings-file`   | --                                | read constituents from a downloaded workbook (UBS)  |
 | `--enrich-ticker`   | off                               | resolve the missing Tickers via OpenFIGI            |
 | `-v, --verbose`     | off                               | detailed logging                                    |
 
@@ -175,6 +179,14 @@ the same ISIN recurs in several sub-funds and every attempt is a network call.
   locale requested: the localized spellings in Amundi's own export are applied client side and
   never reach the API. Two country sites are probed, FR then UK, because a fund is only listed
   where it is registered and neither list is a superset of the other.
+- UBS is the exception: it is not fetched. Its holdings sit behind a GraphQL endpoint
+  that validates a short-lived Azure AD token minted for the product page, and that page
+  is geo-restricted, so outside the permitted regions there is no page to read the token
+  out of. The endpoint carries exactly the same six columns as the **Costituenti** download
+  anyway, so nothing is lost by reading the file: pass it with `--holdings-file` and the
+  ISIN of the fund. The export is OOXML despite its `.xls` extension, and it follows the
+  language of the site it came from, so the weight column is parsed both as `14,98683` and
+  as `14.98683` and whichever reading totals 100% wins.
 
 **3. Normalization.** iShares uses *two* sector vocabularies (GICS-like on equity,
 ICE/Bloomberg-like on fixed income: `Banking`, `Consumer Non-Cyclical`, `Basic Industry`...),
@@ -260,9 +272,16 @@ it, it is reported with a warning.
   `Class` is derived from it (`EQUITY_ORDINARY` -> Equity, `CORPORATE`/`GOVERNMENT` -> Fixed
   Income, `TREASURY_BILL`/`CERTIFICATE_OF_DEPOSIT` -> Cash, and so on). Money market paper is
   bucketed as Cash, matching how Vanguard's `MM.` prefix is treated.
+- **UBS is file-only, and thin**: the export carries just security name, ISIN, SEDOL,
+  currency, price and weight. There is no sector and no asset class, so `Sector` and
+  `Class` come out `Other` on every row, and no country either, so `Country` is derived
+  from the ISIN prefix (`CH0012005267` -> Switzerland). That is the country of
+  registration rather than of risk, which is a coarser approximation than the other five
+  issuers provide -- a company registered in Ireland but operating elsewhere lands in
+  Ireland. There is also no ticker, only a SEDOL; use `--enrich-ticker` if you need one.
 - **Country**: iShares uses country-of-risk, Xtrackers the country of incorporation, Vanguard
   the Bloomberg ISO country, SPDR the trade country on equity and the country of issue on bonds,
-  Amundi its own country-of-risk.
+  Amundi its own country-of-risk, UBS none at all (see above).
   On the same index they disagree on a tail of securities (typically companies incorporated in the
   Netherlands, Ireland or the Cayman Islands but operating in the US), so `Country` and `Region`
   are not strictly comparable across issuers.
