@@ -1,6 +1,6 @@
 """Download of constituents from the official documents of the supported issuers.
 
-Issuers: iShares (BlackRock), Xtrackers (DWS), Vanguard and SPDR (State Street).
+Issuers: iShares (BlackRock), Xtrackers (DWS), Vanguard, SPDR (State Street) and Amundi.
 
 Every provider exposes `fetch(isin)` and returns a `Fund` whose weights are already
 expressed in percentage points, leaving sector/asset class/country in the raw issuer
@@ -842,6 +842,172 @@ class SpdrProvider:
 
 
 # ---------------------------------------------------------------------------
+# Amundi
+# ---------------------------------------------------------------------------
+
+
+class AmundiProvider:
+    """Constituents from the endpoint behind the Amundi ETF product pages.
+
+    The product page renders its holdings table from `composition.compositionData`, which
+    `getProductsData` only fills when the request carries a `composition.compositionFields`
+    list: without it the field comes back null and the page falls back to the ten-line
+    breakdown. The field list below is the one the site itself sends.
+
+    The response ignores the locale for values (sectors and countries are English whatever
+    the `languageCode`): the localized spellings in the site's own Excel export are applied
+    client side, and do not reach this API.
+    """
+
+    name = "Amundi"
+
+    # (host, countryCode, languageCode): a fund is only visible on the sites where it is
+    # registered for distribution, and neither list is a superset of the other.
+    SITES = (
+        ("www.amundietf.fr", "FRA", "fr"),
+        ("www.amundietf.co.uk", "GBR", "en"),
+    )
+    USER_PROFILE = "INSTIT"
+    CHARACTERISTICS = ("ISIN", "SHARE_MARKETING_NAME", "POSITION_AS_OF_DATE")
+    # `country` is requested because the site requests it, but Amundi never fills it;
+    # `countryOfRisk` is the populated one.
+    COMPOSITION_FIELDS = (
+        "date", "type", "bbg", "isin", "name", "weight",
+        "quantity", "currency", "sector", "country", "countryOfRisk",
+    )
+
+    # Amundi codes the instrument type rather than the asset class. Money market paper
+    # goes to Cash, as it does for Vanguard's `MM.` prefix.
+    _CLASS_BY_TYPE = {
+        "EQUITY_ORDINARY": "Equity",
+        "PREFERENCE_SHARES": "Equity",
+        "DEPOSITORY_RECEIPT": "Equity",
+        "RIGHT": "Equity",
+        "WARRANT": "Equity",
+        "CORPORATE": "Fixed Income",
+        "GOVERNMENT": "Fixed Income",
+        "MEDIUM_TERM_NOTE": "Fixed Income",
+        "MUNICIPAL": "Fixed Income",
+        "SECURITIZED": "Fixed Income",
+        "CASH": "Cash",
+        "TREASURY_BILL": "Cash",
+        "CERTIFICATE_OF_DEPOSIT": "Cash",
+        "FUTURE": "Derivative",
+        "STRUCTURED_PRODUCT": "Derivative",
+        "ETF": "Fund",
+        "MUTUAL_FUND": "Fund",
+    }
+
+    def __init__(self, session: requests.Session):
+        self.session = session
+
+    def _products(self, host: str, country: str, language: str, isin: str) -> list[dict]:
+        payload = {
+            "context": {
+                "countryCode": country,
+                "languageCode": language,
+                "userProfileName": self.USER_PROFILE,
+            },
+            # The productId of an Amundi share class is its ISIN.
+            "productIds": [isin],
+            "productType": "PRODUCT",
+            "characteristics": list(self.CHARACTERISTICS),
+            "composition": {"compositionFields": list(self.COMPOSITION_FIELDS)},
+        }
+        response = self.session.post(
+            f"https://{host}/mapi/ProductAPI/getProductsData",
+            json=payload,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            timeout=TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json().get("products") or []
+
+    def resolve(self, isin: str) -> dict | None:
+        """ISIN -> product payload, or None when it is not an Amundi fund.
+
+        One request per site, and an unknown ISIN comes back as an empty list, so this
+        doubles as a cheap issuer probe.
+        """
+        key = isin.strip().upper()
+        for host, country, language in self.SITES:
+            try:
+                products = self._products(host, country, language, key)
+            except (requests.RequestException, ValueError) as exc:
+                log.debug("Amundi lookup failed for %s on %s: %s", key, host, exc)
+                continue
+            if products:
+                return products[0]
+        return None
+
+    def fetch(self, isin: str, product: dict | None = None) -> Fund:
+        key = isin.strip().upper()
+        product = product if product is not None else self.resolve(key)
+        if product is None:
+            raise ProviderError(f"{key} does not appear to be an Amundi ETF")
+
+        composition = product.get("composition") or {}
+        entries = composition.get("compositionData") or []
+        # The whole book comes in one response: `totalNumberOfInstruments` has matched the
+        # number of rows on every fund seen, so there is nothing to paginate.
+        expected = composition.get("totalNumberOfInstruments")
+        if isinstance(expected, int) and expected != len(entries):
+            log.warning("Amundi: %s returned %d of %d instruments", key, len(entries), expected)
+
+        holdings = []
+        for entry in entries:
+            fields = entry.get("compositionCharacteristics") or {}
+            security_type = str(fields.get("type") or "").strip()
+            currency = str(fields.get("currency") or "").strip()
+            name = str(fields.get("name") or "").strip()
+            if not name:
+                # Amundi leaves the name null on the cash line, and its own Excel export
+                # drops the row, quietly losing the weight. Name it after what it is.
+                name = " ".join(
+                    part for part in (security_type.replace("_", " ").title(), currency) if part
+                )
+            if not name:
+                continue
+            # `bbg` is the Bloomberg ticker plus its exchange code ("NVDA UW").
+            ticker, _, exchange = str(fields.get("bbg") or "").strip().partition(" ")
+            holdings.append(
+                Holding(
+                    isin=str(fields.get("isin") or "").strip().upper(),
+                    ticker=ticker,
+                    name=name,
+                    sector_raw=str(fields.get("sector") or "").strip(),
+                    asset_class_raw=self._infer_class(security_type),
+                    country_raw=str(fields.get("countryOfRisk") or "").strip(),
+                    currency=currency,
+                    # Amundi expresses weights as a fraction (0.0558 = 5.58%).
+                    weight=_to_float(entry.get("weight") or fields.get("weight")) * 100.0,
+                    exchange=exchange.strip(),
+                )
+            )
+
+        if not holdings:
+            raise ProviderError(f"no constituent returned for {key}")
+
+        characteristics = product.get("characteristics") or {}
+        return Fund(
+            isin=key,
+            name=str(characteristics.get("SHARE_MARKETING_NAME") or "").strip(),
+            issuer=self.name,
+            as_of=str(characteristics.get("POSITION_AS_OF_DATE") or "").strip(),
+            holdings=holdings,
+        )
+
+    @classmethod
+    def _infer_class(cls, security_type: str | None) -> str:
+        code = (security_type or "").strip().upper()
+        if code in cls._CLASS_BY_TYPE:
+            return cls._CLASS_BY_TYPE[code]
+        # Unknown code: pass it through so it surfaces in the unmapped-values warning
+        # instead of being silently bucketed.
+        return code
+
+
+# ---------------------------------------------------------------------------
 # Issuer detection
 # ---------------------------------------------------------------------------
 
@@ -859,6 +1025,7 @@ class ProviderRegistry:
         self.xtrackers = XtrackersProvider(self.session)
         self.vanguard = VanguardProvider(self.session)
         self.spdr = SpdrProvider(self.session)
+        self.amundi = AmundiProvider(self.session)
         self._funds: dict[str, Fund] = {}
         self._misses: set[str] = set()
 
@@ -867,8 +1034,8 @@ class ProviderRegistry:
 
         SPDR pays for its whole directory on the first probe and answers from memory
         afterwards, so it costs one request for the entire run and goes first.
-        Xtrackers and Vanguard each answer definitively in one request; iShares needs a
-        search plus a confirmation per candidate, so it goes last.
+        Xtrackers and Vanguard each answer definitively in one request, Amundi in one
+        per site; iShares needs a search plus a confirmation per candidate, so it goes last.
         """
         key = isin.strip().upper()
         if key in self._funds:
@@ -894,13 +1061,19 @@ class ProviderRegistry:
             self._funds[key] = fund
             return fund
 
+        product = self.amundi.resolve(key)
+        if product is not None:
+            fund = self.amundi.fetch(key, product=product)
+            self._funds[key] = fund
+            return fund
+
         try:
             fund = self.ishares.fetch(key)
         except ProviderError:
             self._misses.add(key)
             raise ProviderError(
                 f"{key}: unsupported issuer or non-existent ISIN "
-                "(supported: iShares, Xtrackers, Vanguard, SPDR)"
+                "(supported: iShares, Xtrackers, Vanguard, SPDR, Amundi)"
             ) from None
 
         self._funds[key] = fund

@@ -8,9 +8,10 @@ them to an XLSX. Normalization is the point: different issuers describe the same
 with different sectors, asset classes and country names, so without a shared vocabulary two
 funds are not comparable and cannot be summed into a portfolio.
 
-Supported issuers: **iShares** (BlackRock), **Xtrackers** (DWS), **Vanguard** and
-**SPDR** (State Street). iShares, Xtrackers and Vanguard cover the European UCITS range and
-US-domiciled ETFs alike; SPDR covers the UCITS range only (see the limitations below).
+Supported issuers: **iShares** (BlackRock), **Xtrackers** (DWS), **Vanguard**,
+**SPDR** (State Street) and **Amundi** (including the absorbed Lyxor range). iShares,
+Xtrackers and Vanguard cover the European UCITS range and US-domiciled ETFs alike; SPDR
+covers the UCITS range only (see the limitations below).
 
 ## Disclaimer
 
@@ -39,9 +40,10 @@ annual and semi-annual reports, and the issuer's own published holdings files --
 only authoritative sources.
 
 This project is not affiliated with, endorsed by, sponsored by or otherwise connected to
-BlackRock (iShares), DWS (Xtrackers), Vanguard, State Street (SPDR), MSCI, FTSE Russell, S&P, ICE,
-Bloomberg, OpenFIGI or any other party named in this repository. All trademarks, index names and
-fund names are the property of their respective owners and are used here for identification only.
+BlackRock (iShares), DWS (Xtrackers), Vanguard, State Street (SPDR), Amundi (Lyxor), MSCI,
+FTSE Russell, S&P, ICE, Bloomberg, OpenFIGI or any other party named in this repository. All
+trademarks, index names and fund names are the property of their respective owners and are used
+here for identification only.
 You are solely responsible for ensuring that your use of the third-party endpoints complies with
 the applicable terms of service and with all applicable laws, including those on database and
 copyright.
@@ -135,9 +137,9 @@ The pipeline, in execution order.
 **1. Issuer detection.** `ProviderRegistry` probes cheapest first: SPDR pays for its whole fund
 directory on the first probe and answers from memory afterwards, so it costs one request for the
 entire run; Xtrackers and Vanguard each answer definitively in a single HTTP request; iShares needs
-a search plus a confirmation per candidate. The cache also stores negative outcomes: during
-recursive expansion the same ISIN recurs in several sub-funds and every attempt is a network
-call.
+a search plus a confirmation per candidate, so it goes last. Amundi sits between them, at one
+request per country site. The cache also stores negative outcomes: during recursive expansion
+the same ISIN recurs in several sub-funds and every attempt is a network call.
 
 **2. Download.** The sources are the same ones that feed the official product pages.
 
@@ -164,13 +166,24 @@ call.
   equity, fixed income, a legacy variant, commodity and CLO -- that differ in both order and
   spelling (`Currency` / `Currency Local` / `Local Currency`, `Trade Country Name` /
   `Country of Issue` / `Trade Country`), so columns are located by name and not by position.
+- Amundi: the product page renders its holdings from an endpoint that only returns the full
+  book when the request carries a `composition.compositionFields` list; without it the field
+  comes back null and the page falls back to a ten-line breakdown, which is what the issuer's
+  own Excel export is built from. The field list the site sends is used verbatim. The whole
+  book arrives in one response (the largest fund seen is 12136 lines) and
+  `totalNumberOfInstruments` confirms nothing was truncated. Values are English whatever the
+  locale requested: the localized spellings in Amundi's own export are applied client side and
+  never reach the API. Two country sites are probed, FR then UK, because a fund is only listed
+  where it is registered and neither list is a superset of the other.
 
 **3. Normalization.** iShares uses *two* sector vocabularies (GICS-like on equity,
 ICE/Bloomberg-like on fixed income: `Banking`, `Consumer Non-Cyclical`, `Basic Industry`...),
 Xtrackers a third one, Vanguard reports GICS and ICB side by side (GICS is preferred, ICB is
-the fallback), and SPDR mixes GICS on most funds with ICB industry names on the UK, European and
-real estate ones. `taxonomy.py` maps them back to the 11 GICS sectors plus `Government`,
-`Cash & Derivatives` and `Other`, and unifies the asset classes. An unmapped raw value ends up
+the fallback), SPDR mixes GICS on most funds with ICB industry names on the UK, European and
+real estate ones, and Amundi reports GICS sectors with its own instrument-type codes
+(`EQUITY_ORDINARY`, `CORPORATE`, `TREASURY_BILL`...) in place of an asset class. `taxonomy.py`
+maps them back to the 11 GICS sectors plus `Government`, `Cash & Derivatives` and `Other`, and
+unifies the asset classes. An unmapped raw value ends up
 in `Other` **with a warning on stderr**, so the tables get extended instead of degrading
 silently.
 
@@ -179,7 +192,10 @@ Xtrackers one, after normalization the `Class` values match 100% and the `Sector
 diverge on 2 securities, because of real differences in the two issuers' data. Same exercise on the
 S&P 500, between the SPDR and the iShares UCITS trackers: 503 shared securities, `Country` matching
 100%, `Sector` diverging on 1, and a mean weight difference of 0.004 percentage points -- which is
-the one-day lag between the two holdings files, not a normalization gap.
+the one-day lag between the two holdings files, not a normalization gap. The Amundi reader was
+checked against the issuer's own Excel export of the same fund on the same date: all 1274 ISINs
+and weights match to floating point, plus the cash line that Amundi's export drops and this tool
+keeps, which is what takes the total from 99.68% to 100%.
 
 `Currency` comes straight from the issuer where it exists. Where it does not, `currency.py`
 derives it from the country, so the column is usable rather than empty.
@@ -240,8 +256,13 @@ it, it is reported with a warning.
 - **SPDR US range**: only the EMEA (UCITS) funds are covered. The parallel US feed publishes name,
   CUSIP and SEDOL but no ISIN, country or currency per holding, so its rows could neither be
   aggregated by ISIN nor expanded when they are themselves funds.
+- **Amundi asset class**: the feed carries an instrument type rather than an asset class, so
+  `Class` is derived from it (`EQUITY_ORDINARY` -> Equity, `CORPORATE`/`GOVERNMENT` -> Fixed
+  Income, `TREASURY_BILL`/`CERTIFICATE_OF_DEPOSIT` -> Cash, and so on). Money market paper is
+  bucketed as Cash, matching how Vanguard's `MM.` prefix is treated.
 - **Country**: iShares uses country-of-risk, Xtrackers the country of incorporation, Vanguard
-  the Bloomberg ISO country, SPDR the trade country on equity and the country of issue on bonds.
+  the Bloomberg ISO country, SPDR the trade country on equity and the country of issue on bonds,
+  Amundi its own country-of-risk.
   On the same index they disagree on a tail of securities (typically companies incorporated in the
   Netherlands, Ireland or the Cayman Islands but operating in the US), so `Country` and `Region`
   are not strictly comparable across issuers.

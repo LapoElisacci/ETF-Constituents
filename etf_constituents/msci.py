@@ -341,6 +341,9 @@ _NAME_ALIASES: dict[str, str | None] = {
     "XU": None,                  # pseudo-code for the Eurobond (XS) market
     "EUROPE": None,
     "UNASSIGNED": None,
+    # Amundi spellings
+    "CAYMAN ISLAND": "KY",
+    "SUPRANATIONALS": None,
 }
 
 _PUNCT = re.compile(r"[^A-Z0-9]+")

@@ -153,6 +153,7 @@ _SECTOR_ALIASES: dict[str, str] = {
     "unknown": OTHER,
     "other": OTHER,
     "unclassified": OTHER,
+    "unclassifiable": OTHER,
     "n a": OTHER,
     "": OTHER,
     # ICB industries/supersectors (SPDR: the UK, European and real estate funds label
