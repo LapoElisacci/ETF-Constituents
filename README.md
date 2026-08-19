@@ -8,8 +8,9 @@ them to an XLSX. Normalization is the point: different issuers describe the same
 with different sectors, asset classes and country names, so without a shared vocabulary two
 funds are not comparable and cannot be summed into a portfolio.
 
-Supported issuers: **iShares** (BlackRock), **Xtrackers** (DWS) and **Vanguard**
-(European UCITS range and US-domiciled ETFs alike).
+Supported issuers: **iShares** (BlackRock), **Xtrackers** (DWS), **Vanguard** and
+**SPDR** (State Street). iShares, Xtrackers and Vanguard cover the European UCITS range and
+US-domiciled ETFs alike; SPDR covers the UCITS range only (see the limitations below).
 
 ## Disclaimer
 
@@ -38,11 +39,12 @@ annual and semi-annual reports, and the issuer's own published holdings files --
 only authoritative sources.
 
 This project is not affiliated with, endorsed by, sponsored by or otherwise connected to
-BlackRock (iShares), DWS (Xtrackers), Vanguard, MSCI, FTSE Russell, S&P, ICE, Bloomberg, OpenFIGI
-or any other party named in this repository. All trademarks, index names and fund names are the
-property of their respective owners and are used here for identification only. You are solely
-responsible for ensuring that your use of the third-party endpoints complies with the applicable
-terms of service and with all applicable laws, including those on database and copyright.
+BlackRock (iShares), DWS (Xtrackers), Vanguard, State Street (SPDR), MSCI, FTSE Russell, S&P, ICE,
+Bloomberg, OpenFIGI or any other party named in this repository. All trademarks, index names and
+fund names are the property of their respective owners and are used here for identification only.
+You are solely responsible for ensuring that your use of the third-party endpoints complies with
+the applicable terms of service and with all applicable laws, including those on database and
+copyright.
 
 By using this software you accept the above and assume full responsibility for any decision taken
 on the basis of its output.
@@ -130,10 +132,12 @@ The normalized columns take values from closed sets:
 
 The pipeline, in execution order.
 
-**1. Issuer detection.** `ProviderRegistry` probes cheapest first: Xtrackers and Vanguard each
-answer definitively in a single HTTP request, iShares needs a search plus a confirmation per
-candidate. The cache also stores negative outcomes: during recursive expansion the same ISIN
-recurs in several sub-funds and every attempt is a network call.
+**1. Issuer detection.** `ProviderRegistry` probes cheapest first: SPDR pays for its whole fund
+directory on the first probe and answers from memory afterwards, so it costs one request for the
+entire run; Xtrackers and Vanguard each answer definitively in a single HTTP request; iShares needs
+a search plus a confirmation per candidate. The cache also stores negative outcomes: during
+recursive expansion the same ISIN recurs in several sub-funds and every attempt is a network
+call.
 
 **2. Download.** The sources are the same ones that feed the official product pages.
 
@@ -153,18 +157,29 @@ recurs in several sub-funds and every attempt is a network call.
   applies is left unset, because it drops cash, FX and futures and leaves the weights at ~99.2%
   instead of 100%; and `holdings` is used rather than `delayeredHoldings`, which is Vanguard's
   own look-through of a fund of funds, since nested funds are expanded below instead.
+- SPDR: State Street has no per-ISIN lookup, so the fund finder behind the product listing is
+  downloaded once (it returns the whole directory in one response and the site filters it client
+  side) and mapped to the daily holdings workbook of each fund. The workbook states the ISIN it
+  belongs to, so it validates itself. SSGA ships five different column layouts across the range --
+  equity, fixed income, a legacy variant, commodity and CLO -- that differ in both order and
+  spelling (`Currency` / `Currency Local` / `Local Currency`, `Trade Country Name` /
+  `Country of Issue` / `Trade Country`), so columns are located by name and not by position.
 
 **3. Normalization.** iShares uses *two* sector vocabularies (GICS-like on equity,
 ICE/Bloomberg-like on fixed income: `Banking`, `Consumer Non-Cyclical`, `Basic Industry`...),
 Xtrackers a third one, Vanguard reports GICS and ICB side by side (GICS is preferred, ICB is
-the fallback). `taxonomy.py` maps them back to the 11 GICS sectors plus `Government`,
+the fallback), and SPDR mixes GICS on most funds with ICB industry names on the UK, European and
+real estate ones. `taxonomy.py` maps them back to the 11 GICS sectors plus `Government`,
 `Cash & Derivatives` and `Other`, and unifies the asset classes. An unmapped raw value ends up
 in `Other` **with a warning on stderr**, so the tables get extended instead of degrading
 silently.
 
 As a cross-check: across the 1277 securities shared by the iShares MSCI World ETF and the
 Xtrackers one, after normalization the `Class` values match 100% and the `Sector` values
-diverge on 2 securities, because of real differences in the two issuers' data.
+diverge on 2 securities, because of real differences in the two issuers' data. Same exercise on the
+S&P 500, between the SPDR and the iShares UCITS trackers: 503 shared securities, `Country` matching
+100%, `Sector` diverging on 1, and a mean weight difference of 0.004 percentage points -- which is
+the one-day lag between the two holdings files, not a normalization gap.
 
 `Currency` comes straight from the issuer where it exists. Where it does not, `currency.py`
 derives it from the country, so the column is usable rather than empty.
@@ -216,10 +231,20 @@ it, it is reported with a warning.
   it from the issuer's own files when it matters.
 - **Sector on Vanguard bonds**: as with Xtrackers, part of the fixed income book carries no
   sector classification and comes out as `Other`.
+- **SPDR asset class**: the workbook has no asset class column, so it is inferred. The layout
+  gives the prevailing class of the fund (only the equity one carries a sector column) and the
+  rows that depart from it are the ones SSGA leaves without an ISIN: FX balances, futures and
+  swaps, recognised by name.
+- **Sector on SPDR bonds**: the fixed income layout has no sector column at all, so `Sector` comes
+  out as `Other` on the whole book. The equity layout does carry one.
+- **SPDR US range**: only the EMEA (UCITS) funds are covered. The parallel US feed publishes name,
+  CUSIP and SEDOL but no ISIN, country or currency per holding, so its rows could neither be
+  aggregated by ISIN nor expanded when they are themselves funds.
 - **Country**: iShares uses country-of-risk, Xtrackers the country of incorporation, Vanguard
-  the Bloomberg ISO country. On the same index the three disagree on a tail of securities
-  (typically companies incorporated in the Netherlands, Ireland or the Cayman Islands but
-  operating in the US), so `Country` and `Region` are not strictly comparable across issuers.
+  the Bloomberg ISO country, SPDR the trade country on equity and the country of issue on bonds.
+  On the same index they disagree on a tail of securities (typically companies incorporated in the
+  Netherlands, Ireland or the Cayman Islands but operating in the US), so `Country` and `Region`
+  are not strictly comparable across issuers.
 - The endpoints are not documented public APIs: they are the ones used by the official
   websites and can change without notice.
 

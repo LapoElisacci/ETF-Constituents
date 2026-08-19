@@ -1,6 +1,6 @@
 """Download of constituents from the official documents of the supported issuers.
 
-Issuers: iShares (BlackRock), Xtrackers (DWS) and Vanguard.
+Issuers: iShares (BlackRock), Xtrackers (DWS), Vanguard and SPDR (State Street).
 
 Every provider exposes `fetch(isin)` and returns a `Fund` whose weights are already
 expressed in percentage points, leaving sector/asset class/country in the raw issuer
@@ -13,8 +13,10 @@ import csv
 import io
 import logging
 import re
+import warnings
 from dataclasses import dataclass, field
 
+import openpyxl
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -588,6 +590,258 @@ class VanguardProvider:
 
 
 # ---------------------------------------------------------------------------
+# SPDR / State Street
+# ---------------------------------------------------------------------------
+
+
+class SpdrProvider:
+    """Constituents from the daily holdings workbook of the SPDR UCITS range.
+
+    SSGA exposes no per-ISIN lookup: the fund finder behind the product listing returns
+    the whole directory in a single response and the site filters it client side. The
+    directory is therefore downloaded once and kept, which turns every later probe into
+    a dict lookup: the reason this provider goes first in the detection ladder.
+
+    Only the EMEA (UCITS) range is covered. The parallel US feed publishes name, CUSIP
+    and SEDOL but no ISIN, country or currency per holding, so its rows could neither be
+    aggregated by ISIN nor expanded when they are themselves funds.
+    """
+
+    name = "SPDR"
+
+    BASE_URL = "https://www.ssga.com"
+    DIRECTORY_URL = BASE_URL + "/bin/v1/ssmp/fund/fundfinder"
+    # `de` is the smallest country list that still covers the whole UCITS range: `it`,
+    # `fr` and `nl` each miss a white-label sub-fund and `ch` misses a quarter of them.
+    # `emea` is a superset, but 8.8 MB and the surplus is the excluded US range.
+    DIRECTORY_PARAMS = {
+        "country": "de",
+        "language": "en_gb",
+        "role": "intermediary",
+        "product": "etfs",
+        "ui": "fund-finder",
+    }
+    HOLDINGS_DOC_TYPE = "Holdings-daily"
+    # The ISIN has no field of its own in the directory: it is one of the search keywords.
+    _KEYWORD_ISIN_RE = re.compile(r"\b[A-Z]{2}[A-Z0-9]{9}[0-9]\b")
+
+    # SSGA ships five column layouts (equity, fixed income, a legacy variant, commodity
+    # and CLO) that differ in both order and spelling, so columns are located by name.
+    # `Identifier` is only an ISIN on the CLO layout; elsewhere it is a CUSIP, and
+    # is_valid_isin filters it out.
+    _COLUMNS = {
+        "isin": ("ISIN", "Identifier"),
+        "name": ("Security Name", "Name"),
+        "ticker": ("Ticker",),
+        "currency": ("Currency", "Currency Local", "Local Currency"),
+        "country": ("Trade Country Name", "Country of Issue", "Trade Country"),
+        "sector": ("Sector Classification", "Sector"),
+        "weight": ("Percent of Fund", "Weight"),
+    }
+    _WEIGHT_HEADERS = frozenset({"Percent of Fund", "Weight"})
+    _HEADER_SCAN_ROWS = 15
+    # Only the equity layout carries a sector column; see _infer_class.
+    _EQUITY_HEADER = "Sector Classification"
+    # The sheet ends with the legal disclaimer in a single cell, a few thousand
+    # characters long. No security name comes close.
+    _MAX_NAME_LEN = 250
+
+    # The workbook has no asset class column: it has to be inferred (see _infer_class).
+    # Both patterns are applied only to rows without a valid ISIN, so a listed security
+    # ("Dollar General", "Euronext") cannot be caught by a currency word.
+    _DERIVATIVE_MARKERS = re.compile(
+        r"^[A-Z]{3}:[A-Z]{3}\b"  # FX forward: "HKD:CNY 20250930"
+        r"|\b(?:trs|swap|fut|emini|e[- ]mini|1rty)\b"
+        # Index futures carry the delivery month: "EMINI S&P SEP26", "MSCI EAFE SEP6".
+        r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\d{1,2}\b",
+        re.I,
+    )
+    _CASH_MARKERS = re.compile(
+        r"\bcash(?:_|\b)|\b(?:deposit|stif|liquidity|money market)\b"
+        # Uninvested FX balances are named after the currency: "Euro", "Swedish Krona".
+        r"|\b(?:dollar|euro|pound|sterling|yen|krona|krone|franc|renminbi|yuan|shekel"
+        r"|peso|riyal|rial|baht|won|rand|rupiah|ringgit|zloty|lira|dirham|real|forint"
+        r"|koruna|rupee|dinar|sol|leu)\b",
+        re.I,
+    )
+
+    def __init__(self, session: requests.Session):
+        self.session = session
+        self._entries: dict[str, tuple[str, str]] | None = None
+
+    def _directory(self) -> dict[str, tuple[str, str]]:
+        """ISIN -> (fund name, holdings file path), downloaded once per run."""
+        if self._entries is None:
+            self._entries = self._load_directory()
+        return self._entries
+
+    def _load_directory(self) -> dict[str, tuple[str, str]]:
+        try:
+            response = self.session.get(
+                self.DIRECTORY_URL,
+                params=self.DIRECTORY_PARAMS,
+                headers={"Accept": "application/json"},
+                timeout=TIMEOUT,
+            )
+            response.raise_for_status()
+            funds = response.json()["data"]["funds"]["etfs"]["datas"]
+        except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+            # A directory that cannot be read degrades into "not a SPDR fund", so the
+            # remaining issuers still get their probe.
+            log.debug("SSGA fund directory unavailable: %s", exc)
+            return {}
+
+        entries: dict[str, tuple[str, str]] = {}
+        for item in funds:
+            match = self._KEYWORD_ISIN_RE.search(item.get("keywords") or "")
+            if not match:
+                continue
+            path = self._holdings_path(item)
+            if path:
+                entries.setdefault(match.group(0), (item.get("fundName") or "", path))
+        log.debug("SSGA directory: %d funds", len(entries))
+        return entries
+
+    @classmethod
+    def _holdings_path(cls, item: dict) -> str:
+        for group in item.get("documentPdf") or []:
+            if group.get("docType") != cls.HOLDINGS_DOC_TYPE:
+                continue
+            for doc in group.get("docs") or []:
+                if doc.get("path"):
+                    return str(doc["path"])
+        return ""
+
+    def resolve(self, isin: str) -> tuple[str, str] | None:
+        return self._directory().get(isin.strip().upper())
+
+    def fetch(self, isin: str, entry: tuple[str, str] | None = None) -> Fund:
+        key = isin.strip().upper()
+        entry = entry if entry is not None else self.resolve(key)
+        if entry is None:
+            raise ProviderError(f"{key} does not appear to be a SPDR ETF")
+        directory_name, path = entry
+
+        try:
+            response = self.session.get(self.BASE_URL + path, timeout=TIMEOUT)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise ProviderError(f"SPDR constituents download failed for {key}: {exc}") from exc
+
+        rows = self._sheet_rows(key, response.content)
+        header = self._header_index(rows)
+        if header is None:
+            raise ProviderError(f"unexpected holdings layout for {key}")
+
+        # The workbook states the ISIN it belongs to, so it validates itself.
+        file_isin = self._header_value(rows[:header], "ISIN:").upper()
+        if file_isin and file_isin != key:
+            raise ProviderError(f"SPDR holdings file for {key} reports {file_isin}")
+
+        columns = [str(c).strip() if c is not None else "" for c in rows[header]]
+        at = {
+            field_name: next((columns.index(n) for n in names if n in columns), None)
+            for field_name, names in self._COLUMNS.items()
+        }
+        default_class = (
+            taxonomy.EQUITY if self._EQUITY_HEADER in columns else taxonomy.FIXED_INCOME
+        )
+
+        def cell(row: tuple, field_name: str) -> str:
+            index = at[field_name]
+            if index is None or index >= len(row) or row[index] is None:
+                return ""
+            value = str(row[index]).strip()
+            # SSGA writes "-" for an empty cell in every column.
+            return "" if value == "-" else value
+
+        holdings = []
+        for row in rows[header + 1 :]:
+            name = cell(row, "name")
+            if not name or len(name) > self._MAX_NAME_LEN:
+                continue
+            constituent = cell(row, "isin").upper()
+            if not is_valid_isin(constituent):
+                # "-" and "Unassigned" on cash and FX rows, a CUSIP on the commodity one.
+                constituent = ""
+            holdings.append(
+                Holding(
+                    isin=constituent,
+                    ticker=cell(row, "ticker"),
+                    name=name,
+                    sector_raw=cell(row, "sector"),
+                    asset_class_raw=self._infer_class(constituent, name, default_class),
+                    country_raw=cell(row, "country"),
+                    currency=cell(row, "currency"),
+                    # Already percentage points; "-" on rows rounded down to zero.
+                    weight=_to_float(cell(row, "weight")),
+                )
+            )
+
+        if not holdings:
+            raise ProviderError(f"no constituent returned for {key}")
+
+        header_name = self._header_value(rows[:header], "Fund Name:")
+        return Fund(
+            isin=key,
+            name=self._clean_name(header_name or directory_name),
+            issuer=self.name,
+            as_of=self._header_value(rows[:header], "Holdings As Of:"),
+            holdings=holdings,
+        )
+
+    @staticmethod
+    def _sheet_rows(isin: str, payload: bytes) -> list[tuple]:
+        with warnings.catch_warnings():
+            # These workbooks carry no default style and openpyxl warns on every load.
+            warnings.simplefilter("ignore", UserWarning)
+            try:
+                book = openpyxl.load_workbook(io.BytesIO(payload), read_only=True, data_only=True)
+            except Exception as exc:  # openpyxl surfaces zipfile/XML errors as-is
+                raise ProviderError(f"unreadable SPDR workbook for {isin}: {exc}") from exc
+            try:
+                return list(book.active.iter_rows(values_only=True))
+            finally:
+                book.close()
+
+    @classmethod
+    def _header_index(cls, rows: list[tuple]) -> int | None:
+        """Row of the column headers, below the fund name / ISIN / as-of block."""
+        for index, row in enumerate(rows[: cls._HEADER_SCAN_ROWS]):
+            if {str(c).strip() for c in row if c is not None} & cls._WEIGHT_HEADERS:
+                return index
+        return None
+
+    @staticmethod
+    def _header_value(rows: list[tuple], label: str) -> str:
+        for row in rows:
+            if row and str(row[0]).strip() == label and len(row) > 1 and row[1] is not None:
+                return str(row[1]).strip()
+        return ""
+
+    @staticmethod
+    def _clean_name(name: str) -> str:
+        return re.sub(r"\s+", " ", name.replace("®", "").replace("™", "")).strip()
+
+    @classmethod
+    def _infer_class(cls, isin: str, name: str, default_class: str) -> str:
+        """The workbook has no asset class column: it has to be inferred.
+
+        The layout gives the prevailing class of the fund (only the equity one carries a
+        sector column), and the rows that depart from it are the ones SSGA leaves
+        without an ISIN: FX balances, futures and swaps. Any reclassification to `Fund`
+        happens upstream, when the ISIN resolves as an ETF of a supported issuer.
+        """
+        if not isin:
+            # Checked first: "EURO STOXX 50 Sep26" would also match the currency words.
+            if cls._DERIVATIVE_MARKERS.search(name):
+                return taxonomy.DERIVATIVE
+            if cls._CASH_MARKERS.search(name):
+                return taxonomy.CASH
+        return default_class
+
+
+# ---------------------------------------------------------------------------
 # Issuer detection
 # ---------------------------------------------------------------------------
 
@@ -604,12 +858,15 @@ class ProviderRegistry:
         self.ishares = IsharesProvider(self.session)
         self.xtrackers = XtrackersProvider(self.session)
         self.vanguard = VanguardProvider(self.session)
+        self.spdr = SpdrProvider(self.session)
         self._funds: dict[str, Fund] = {}
         self._misses: set[str] = set()
 
     def fetch(self, isin: str) -> Fund:
         """Download the constituents, cheapest issuer probe first.
 
+        SPDR pays for its whole directory on the first probe and answers from memory
+        afterwards, so it costs one request for the entire run and goes first.
         Xtrackers and Vanguard each answer definitively in one request; iShares needs a
         search plus a confirmation per candidate, so it goes last.
         """
@@ -618,6 +875,12 @@ class ProviderRegistry:
             return self._funds[key]
         if key in self._misses:
             raise ProviderError(f"{key}: unsupported issuer or non-existent ISIN")
+
+        entry = self.spdr.resolve(key)
+        if entry is not None:
+            fund = self.spdr.fetch(key, entry=entry)
+            self._funds[key] = fund
+            return fund
 
         payload = self.xtrackers.resolve(key)
         if payload is not None:
@@ -637,7 +900,7 @@ class ProviderRegistry:
             self._misses.add(key)
             raise ProviderError(
                 f"{key}: unsupported issuer or non-existent ISIN "
-                "(supported: iShares, Xtrackers, Vanguard)"
+                "(supported: iShares, Xtrackers, Vanguard, SPDR)"
             ) from None
 
         self._funds[key] = fund

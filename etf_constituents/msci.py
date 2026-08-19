@@ -326,6 +326,21 @@ _NAME_ALIASES: dict[str, str | None] = {
     "UNKNOWN": None,
     "N A": None,
     "NONE": None,
+    # SPDR / State Street spellings
+    "UAE": "AE",
+    "KOREA": "KR",
+    "REPUBLIC OF KOREA": "KR",
+    "C I GUERNSEY": "GG",
+    "C I JERSEY": "JE",
+    "BRITISH VIRGIN": "VG",
+    "VIRGIN ISLANDS": "VG",
+    "DOMINICAN REPB": "DO",
+    "TRINIDAD TOBAGO": "TT",
+    "BELGIUM LUXEMBOURG": "BE",  # index label; the securities behind it are Belgian
+    "SUPRA NATIONAL": None,
+    "XU": None,                  # pseudo-code for the Eurobond (XS) market
+    "EUROPE": None,
+    "UNASSIGNED": None,
 }
 
 _PUNCT = re.compile(r"[^A-Z0-9]+")

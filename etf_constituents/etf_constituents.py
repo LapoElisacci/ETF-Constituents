@@ -2,7 +2,7 @@
 """Download the constituents of an ETF from the official issuer documents and export
 them to a normalized XLSX.
 
-Supported issuers: iShares (BlackRock), Xtrackers (DWS), Vanguard.
+Supported issuers: iShares (BlackRock), Xtrackers (DWS), Vanguard, SPDR (State Street).
 
     python etf_constituents.py IE00B4L5Y983
     python etf_constituents.py LU0397221945 -o portfolio.xlsx --enrich-ticker
@@ -61,7 +61,10 @@ MATERIAL_RESIDUAL = 0.1
 
 # An ISIN is a candidate for expansion only if it passes this filter: without it, an
 # equity fund would fire ~1300 HTTP probes to find out they are all single stocks.
-_FUND_NAME_RE = re.compile(r"UCITS ETF|\biShares\b|\bXtrackers\b|\bETF\b|\bINDEX FUND\b", re.I)
+_FUND_NAME_RE = re.compile(
+    r"UCITS ETF|\biShares\b|\bXtrackers\b|\bSPDR\b|\bState Street\b|\bETF\b|\bINDEX FUND\b",
+    re.I,
+)
 _FUND_DOMICILES = ("IE", "LU")
 
 
@@ -349,7 +352,10 @@ def write_xlsx(path: str, rows: list[Row]) -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Download the constituents of an ETF (iShares, Xtrackers, Vanguard) to XLSX.",
+        description=(
+            "Download the constituents of an ETF "
+            "(iShares, Xtrackers, Vanguard, SPDR) to XLSX."
+        ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("isin", help="ISIN of the ETF")
